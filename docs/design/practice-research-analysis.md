@@ -152,6 +152,38 @@ Grades as in `student-model.md`: **A** direct evidence in a similar setting, **B
    - The second recall is a same-day FSRS event (the short-term formula). **B** (Kornell & Bjork 2008; the successive-relearning criterion).
 4. **Related rates needs its setup step tagged as its own component** (the translation into a diagram and equations), which the 4.1 map already has. Its problems are checked for it in review.
 
-## 7. Pending notes
+## 7. Timed practice and exam pace (`timed_practice.md`)
 
-Timed practice is added when its note is final.
+**What the evidence says:**
+- **No study tests what we need.** None randomizes timed against untimed practice and then measures a later timed exam, in high-school or college math, physics or engineering, or on the SAT, ACT, GRE or AP. Everything is indirect.
+- **Speed drills help fact fluency in young children.**
+  - Speeded against non-speeded practice: ES .51 in at-risk first graders (Fuchs et al. 2013, confounded).
+  - Timed against identical untimed practice: g = 0.09–0.42 in the three clean K–6 contrasts (WWC 2021).
+  - The gain transfers to procedural computation, not to algebra or word problems (Fuchs et al. 2009). It transfers only when strategy instruction comes with it (Woodward 2006; Tournaki 2003).
+  - Automaticity came only after declarative training (Hasselbring et al. 1988).
+- **In adults, timing did not raise accuracy** (Jazbutis 2023, n = 211, an artificial times table). It lowered immediate accuracy, raised transfer accuracy (.87 vs .80), and raised stress.
+- **One small engineering pilot** (Miller 2011, n = 19, historical control): timed homework went with better midterms and the same final.
+- **When to add speed.** No study compares accuracy first with speed from the start. Expert guidance says not to time the introduction of a concept (WWC panel). The usual entry criterion for fluency work is 80% accuracy.
+- **Costs.**
+  - Math anxiety correlates with performance at r = −.28 to −.34, more strongly on multistep tasks (Namkung et al. 2019; Barroso et al. 2021).
+  - Time pressure raises state anxiety in the short term. Bell pacing against self pacing made no performance difference in undergraduates (n = 35).
+  - Pressure harms people with high working memory on demanding math (Beilock & Carr 2005), and practice until answers are retrieved removed the choking (Beilock et al. 2004).
+- **Exam pacing.** The share of time used did not predict grades over six engineering courses (R² = 0.023). Extra time did not raise online quiz scores. No study tests practicing against a pace target.
+
+**What this means for Toishi:**
+1. **The order stays: accuracy first, then pace.** M1 is untimed, and M2 and M3 add pace. No clock runs during practice; the time appears after submitting (TIME rules). This is what the guidance says. **B** for the order, **C** for pace as a requirement.
+2. **The pace requirement itself is grade C, and the owner's choice.** Nothing shows that training to a standard time raises timed exam scores. What the sittings check is what an exam checks: a block of problems in its time (v1.3).
+3. **Sittings show the block time and never cut off.** That keeps the rehearsal and limits the pressure. The Untimed switch (TIME-6) stays for practice sessions. A sitting is always timed.
+4. **Maintenance at the target is the anti-choking part:** practice until retrieval is fluent removed choking under pressure (Beilock et al. 2004). **B**.
+5. **Log it, don't tune it:** time per sitting, pass rate by predicted pass chance, and exam scores entered against readiness (6.5). Revisit after real use.
+
+## 8. Decisions for the owner
+
+1. **The accuracy target and the daily load.** The simulator's typical student has a 65% starting accuracy (Koedinger et al. 2023's median). Under the model, that student needs about 70 successes on a component to reach 0.90, so they can't certify M1 by its 5-day deadline, and their planned load grows without bound. Real logs also level off near 89% (audit #17).
+   - Options:
+     - **(a)** Keep 0.90 and the full reported load, and let Today show what fits in the student's chosen time, in priority order, beside the full cost.
+     - **(b)** Set the targets by milestone: M1 0.80, M2 0.85, M3 the course target.
+     - **(c)** Keep 0.90 and lower only the default tier to 3.
+   - The numbers from the real planner come first (the simulator rerun after the merges).
+2. **The comparison line under the solution** (§1, proposal 5).
+3. **How a new skill opens**: decided as problem first, with the example as aided reference (§5). The owner can reverse it.
