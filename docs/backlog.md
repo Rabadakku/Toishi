@@ -238,7 +238,7 @@ read handwritten steps). Plan:
 - **Distribution notes** (owner asked how people will get it): start small (one class or a tutoring center), then r/Anki, r/learnmath, r/calculus, r/EngineeringStudents, Show HN. Hosting without GitHub: Cloudflare Pages + R2 or Codeberg. Without the Apple Developer Program, macOS 15+ blocks the first launch (System Settings → Privacy & Security → Open Anyway); the download page needs a three-screenshot guide, and notarization is the first spend worth considering once there are users.
 
 ## Content: precalculus geometry first (owner, 2026-11-02, 16:02)
-- The owner often forgets geometry definitions. A precalculus geometry section comes first in the content queue, alongside Calculus I Chapter 4, because related rates (4.1) and optimization (4.7) lean on it:
+- Geometry definitions are easy to forget and calculus leans on them. A precalculus geometry section comes first in the content queue, alongside Calculus I Chapter 4, because related rates (4.1) and optimization (4.7) depend on it:
   - area and perimeter;
   - volume and surface area of prisms, cylinders, cones, spheres and pyramids;
   - similar triangles and proportional sides;

@@ -32,7 +32,7 @@ Every assumption of the student model (`core/learner`) and the planner (`core/pl
 | 9 | Same-day successes after the first count 0.25 (3.4) | Next-day accuracy is predicted best by weights 0–0.25 (pooled, both datasets); the app's model is flat | Supported | Keep |
 | 10 | Slip 5% (3.2) | The app's model is better at 2%; pooled fits put slip near 0 | Too high | Slip prior 0.05 → 0.02 (refit per student) |
 | 11 | Variance drift 0.01/day (3.4) | Statics: 0.05 slightly better; XES: see below | Weak evidence | Keep |
-| 12 | A problem is the product of its components (conjunctive, 3.2) | After recalibration, multi-skill items are underpredicted by 12 points in both datasets while single-skill items are calibrated. Scaling the exponent with the component count fixes it: (Π q)^(1/K) cuts Statics log loss 0.514 → 0.506 | Wrong as a strict product | Combine as (Π q_k)^(K^−c), c between 0.75 and 1; keep the per-component blame on these effective chances |
+| 12 | A problem is the product of its components (conjunctive, 3.2) | After recalibration, multi-skill items are underpredicted by 12 points in both datasets while single-skill items are calibrated. The geometric mean (Π q)^(1/K) fits best in both: recalibrated log loss Statics 0.514 → 0.506, XES 0.490 → 0.481. The weakest-link min is nearly as good. Both datasets tag overlapping skills (a parent and its sub-concept), which a product double-counts | Wrong for overlapping tags; untested for distinct ones | Keep the product: our content rule now requires distinct components. Check calibration by component count on our own data (6.4) and switch to (Π q_k)^(K^−c) if the gap appears |
 | 13 | Log time is normal with σ_T 0.45 (3.5) | Residual σ after item and student effects: 0.51 (EdNet single questions); Statics single steps 0.95 (steps of a few seconds); near-normal tails (0.5–0.6% beyond 3 SD) | Supported for whole problems | Keep |
 | 14 | Practice speeds students up, α = 0.3 (3.5) | After item and student effects, α = 0.036 (Statics) and 0.030 (EdNet): about 10× smaller. Delaney's 0.25–0.54 is for repeating identical problems | Wrong | α → 0.05 |
 | 15 | Students differ in speed (τ, 3.5) | Split-half reliability of a student's speed 0.94 in both datasets; SD 0.32–0.46 log units | Supported | Keep |
@@ -58,7 +58,7 @@ Every assumption of the student model (`core/learner`) and the planner (`core/pl
 Statics, the app's model end to end:
 - **Default constants:** log loss 0.543, AUC 0.659, underpredicting success by 9.4 points before any refit.
 - **With φ 0.05, ρ 0 and slip 0.02:** log loss 0.534, AUC 0.664. After recalibration, every gap bin out to 30 days is calibrated within 2 points.
-- **With the geometric-mean combination as well:** recalibrated log loss falls further, 0.514 → 0.506.
+- **With the geometric-mean combination as well:** recalibrated log loss falls further, 0.514 → 0.506. In XES3G5M it falls 0.490 → 0.481.
 - **The remaining gap** to the pooled model with per-skill parameters (0.468) is per-skill information that one student's log can't supply.
 
 ## What is missing
