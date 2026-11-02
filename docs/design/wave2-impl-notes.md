@@ -12,9 +12,9 @@
 
 | Phase | What | State |
 |---|---|---|
-| 1 | user.db v3 migration and storage helpers | done |
-| 2 | `core/practice` (catalog, observations, engine) with tests | next |
-| 3 | the session switch (`core/queue/session.py`) | |
+| 1 | user.db v3 migration and storage helpers | done (d31ba65) |
+| 2 | `core/practice` (catalog, observations, engine) with tests | done |
+| 3 | the session switch (`core/queue/session.py`) | next |
 | 4 | the bridge (`app/api.py`) | |
 | 5 | removals | |
 
@@ -95,3 +95,84 @@
   connection and counted the v3 step too, so "kills inside v2" landed in v3. The v3 sweep includes
   the instructions just before and after the commit, since the step is about 136,000 instructions and
   a 1/40 stride skipped them.
+
+## Phase 2: `core/practice`
+
+**Delivered**
+- `catalog.py`: `build_catalog(storage)` gives the `ComponentInfo` catalog, a `ProblemSpec` per
+  gradable problem (`card` or `card#part`), each course's `core.plan.Course` (skills in course
+  order with requires, confusable pairs, example cards, pools, the background skills it needs and
+  its pack's pace standard), skill names, decks and textbook pointers. `catalog_key` (pack content
+  hashes and the own-content counts) decides when to rebuild.
+- `observations.py`: `observations_of(attempt, catalog)`, one row's observations, per section 3.
+- `engine.py`: `PracticeEngine` with `state`, `observations`, `record`, `params`, `reset_params`,
+  `settings`, `certifier`, `plan_day`, `next_item`, `statuses`, `certified`, `calibration`,
+  `refit_due`, `refit`, `last_refit`; `PlannerModel` (the `core.plan.Predictor` view of
+  `StudentModel`), `merge` (several courses), `plan_settings`, `params_json`/`params_from_json`,
+  `work_item` (builds a `WorkItem` with whatever fields this `core.plan` has).
+- Tests in `tests/practice/` (32): the catalog on a pack with a pace standard and without one;
+  observations from synthetic v3 rows and from the frozen v2 history read through the real Test
+  pack (checked against an independent reading of the log); C3 after incremental updates and after
+  an undo; `record`; the prior written once; resets; refits recorded and adopted only on evidence;
+  a refit never overriding a reset made meanwhile; plans, statuses and the course merge; settings
+  and exams; calibration bins; concurrent readers.
+
+**Choices the spec left open**
+- *Background components* follow the spec: an `alg.`, `trig.` or `pre.` id, or a skill in no
+  course's sections (Calc I keeps its precalculus skills in its own "0 Precalculus" sections, so the
+  prefix is what marks them). The prefixes are one named constant, `BACKGROUND_PREFIXES`, the
+  skills files' convention. AGENTS rule 12 asks for no subject-specific code, so a `background: yes`
+  key in the skills file format would be the general form (the coordinator may want that later).
+  A component has one flag for the whole profile; a Calc I skill used by Calc II is a course
+  component of Calc I, and the planner, which checks `course_id`, treats it as background there.
+- *Pools hold `problem` cards only.* Find-the-error and which-method cards were served by the
+  diagnosis flow (ENG-16, ADR-0010), which is removed.
+- *Multi-part cards.* A part with its own `skill` is a one-component problem of that skill (the
+  solution's steps belong to the card, and such a part reports to its own skill, as
+  `PartOutcome` did). A part without one keeps the card's components less the other parts' own
+  skills. Each part's T* is `standard_minutes(part, card=...)`; its `steps` is its share of the
+  card's.
+- *Course order* inside a section: prerequisites first, then id. Packs keep no file order.
+- *A course's background skills*: those its skills require and those in its own sections, each with
+  its pool (the planner grows a struggling skill's background prerequisites).
+- **(owner)** *A pack without pace data* (the Test and Tutorial packs, older packs, own courses)
+  gets a flat standard: every section at zero hours, so the whole course is introduced on its
+  anchor day (with an alignment, the sections before it are assumed learned, as usual). Such a
+  course contributes no standard hours, so `hours_basis` is `none` until there is history.
+- *`record(attempt_id)` instead of `record(observation)`.* The state is a pure function of the log
+  (C3), so after the session's transaction commits, the engine reads the committed row back from the
+  log and returns the updates of that row's first tries. Nothing can be recorded that the log does
+  not hold, and the session, undo and every other writer go through the same path.
+- *The cache key* is the spec's (newest non-voided id, voided count, parameter version) plus the
+  catalog key and the study-day clock (time zone, rollover hour). New rows whose order falls before
+  the last observation, which a clock set back could give, replay instead of updating.
+- *Suspended and reported cards* are passed to the planner as `retired` on each call, so marking a
+  card never rebuilds the catalog.
+- *Certifier priors* are taken at the first use of the study day; the certifier is rebuilt after a
+  replay, a settings change or a change of the unavailable cards, and gains each new first try
+  through `Certifier.add`.
+- *Old rows* (before v3): a verdict `shown` row is a worked example or a tier-1 problem shown solved
+  (a non-final row with `attempt_number` 1), never a try; practice-test problems never answered are
+  not observations; a hint before answering makes a first try aided (design 3.4); a self-graded first
+  try is correct by its strict label (`extra.strict_ok`, else a Good rating); `minutes` comes from
+  `extra.speed_ms` (TIME-4's speed time, solve time plus the typing allowance, capped), which the old
+  engine stored on every timed problem, under the same validity rules, rather than raw `active_ms`.
+  New rows store the same quantity in `valid_minutes`.
+- *Parameter versions.* Each row has its own version: the prior is `prior`, a reset is
+  `reset-<time>`, a refit uses its fitted version (`map-<hash>`), suffixed `.2`, `.3` if that name
+  exists. A refit that is not adopted records the candidate (not current) with its report, so Model
+  shows what was tried. A version made current while a refit ran (a reset) wins: the refit is
+  recorded but not adopted. The report keeps the log's size and last attempt id, which `refit_due`
+  reads for "grown by half" and the drift check over the predictions since.
+- *Calibration* bins the cached update records, which are the replay under the current parameters
+  (every new version replays). Gap bins: first, under 1 day, 1-7, 8-30, over 30 days since the main
+  skill's previous first try. Component count: course components only, at least 1.
+- *Several courses.* A course's "blocks" are its plan's items up to its last new-block item (checks
+  placed inside that run stay there); the rest go round-robin. Hours to keep pace add up over the
+  courses.
+
+**Spec problems found**
+- *"textbook ... from the deck and pack.json source"*: pack.json has no source field (id, title,
+  version, license, description). The pointer comes from the skill's `textbook:` line, else its
+  section's textbook reference, split at its last space into book and section
+  ("OpenStax Calculus Vol 1 §4.3"), first reference of a list.
