@@ -36,6 +36,11 @@ One file, `packs/calc1/<section number with dashes>-<short title>.cards.md`, wit
 
   Never use any other textbook's problems, wording, figures or distinctive scenarios: Stewart, Thomas, Larson and the like are copyrighted.
 - **IDs:** `calc1.<section, e.g. 4-1>.<name>.<nnn>` for static cards and `.t<nn>` for templates. They are permanent.
+- **Flashcards, when a deck has definition or formula cards** (`docs/design/practice-research-analysis.md` §6):
+  - a formula that is an expression gets a typed math `answer:`, so the app grades the recall;
+  - a definition or theorem that must be self-graded lists its idea units on the back, one per line;
+  - the front gives the situation or name and the back the formula or fact, which is the direction problems use;
+  - every fact is paired with short problems that use it.
 
 ## Check until clean
 

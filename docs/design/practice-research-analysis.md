@@ -125,6 +125,33 @@ Grades as in `student-model.md`: **A** direct evidence in a similar setting, **B
    - The page shows the button.
    - It is built after the three wave 2 branches merge, by one builder, so it lands consistently.
 
-## 6. Pending notes
+## 6. Definitions, formulas and transfer (`definitions_and_transfer.md`)
 
-Timed practice and definitions and transfer are added as their notes arrive.
+**What the evidence says:**
+- **Recalling facts does not by itself help application.**
+  - Fact quizzes lifted a fact test from .54 to .78 (d = 1.23) but not higher-order questions: .46 against .44 for studying once (Agarwal 2019, college, full text).
+  - Higher-order quizzes scored .85 on higher-order questions.
+  - Transfer of testing averages d = 0.40 over 192 effects. It is weakest for worked-example problems, and it shrinks after a publication-bias correction (Pan & Rickard 2018).
+  - Practicing term-to-definition did not transfer to the reverse question (Pan & Rickard 2017).
+- **Successive relearning:** 3 correct recalls at first, then 1 per session over at least 3 spaced sessions. More relearning sessions wash out most of the gain from a higher first criterion.
+- **Stopping after one correct recall is costly.** Students dropped 68% of flashcards after one correct recall. Those items were recalled at .62 later, against .88 after two (Kornell & Bjork 2008).
+- **Self-scoring.** Students over-credit their own recall, low performers most. Checking against idea units cut overconfidence from 0.14 to 0.06 (Nederhand et al. 2018, N = 127).
+- **Recall vs multiple choice.** With feedback the two formats perform about the same (Smith & Karpicke 2014). Short answer beat multiple choice only with feedback (Kang et al. 2007).
+- **Prerequisites and calculus.**
+  - Readiness tests predict calculus grades (r = .28–.51).
+  - Spaced precalculus quiz problems raised a readiness test a month after the course (.54 to .59, N = 51).
+  - In related rates, the weakest step is turning the words into a diagram and equations (Martin 2000).
+- **Mixing facts with problems** gave the best overall average, while each pure quiz type won on its own test (Agarwal 2019).
+
+**What this means for Toishi:**
+1. **The geometry deck pairs every fact with problems that use it** (owner design, now supported). The flashcards keep formulas retrievable, and the problems are what carry over to calculus. **B**.
+2. **Formula cards get typed answers that the app grades.** Definition cards that must be self-graded list their idea units, one per line, so each part is checked. Cards ask in the direction the problems use: the situation on the front, the formula on the back. **B**. (Sent to the geometry writer, and added to the content brief.)
+3. **New flashcards need two correct recalls on their first day (wave 2 follow-up).**
+   - Today a new card that is answered Good once graduates. Only a missed card comes back in the session.
+   - Anki's default learning steps (1 and 10 minutes) also give two recalls on day one, so this is Anki parity too.
+   - The second recall is a same-day FSRS event (the short-term formula). **B** (Kornell & Bjork 2008; the successive-relearning criterion).
+4. **Related rates needs its setup step tagged as its own component** (the translation into a diagram and equations), which the 4.1 map already has. Its problems are checked for it in review.
+
+## 7. Pending notes
+
+Timed practice is added when its note is final.
