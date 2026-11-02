@@ -187,3 +187,17 @@ Grades as in `student-model.md`: **A** direct evidence in a similar setting, **B
    - The numbers from the real planner come first (the simulator rerun after the merges).
 2. **The comparison line under the solution** (§1, proposal 5).
 3. **How a new skill opens**: decided as problem first, with the example as aided reference (§5). The owner can reverse it.
+
+## 9. Pace training (owner, 2026-11-02, 17:52 and 18:02)
+
+The owner asked for speed to be trained, not only measured: some students would score above 90% with twice the time. He left the design to the coordinator, on two conditions: decisions come from data and research, and each one is labelled with its evidence.
+
+The current design:
+- measures pace and requires it for M2 and M3;
+- has a fixed speed-up of 3.5% per doubling of practice, against 2–2.5% measured in the logs;
+- tracks speed as an all-time average;
+- times only whole problems.
+
+A student at twice the standard time therefore never reaches M2.
+
+Inputs being gathered: a deeper research pass (`speed_training_deep.md`) and public math logs with solve times (`timing_datasets.md`). From them, the coordinator will measure speed-up rates per student, whether slow starters catch up, and which practice produces speed. The pace-training design (v1.4) follows from those results.
