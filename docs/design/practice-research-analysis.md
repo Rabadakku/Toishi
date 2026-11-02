@@ -96,6 +96,35 @@ Grades as in `student-model.md`: **A** direct evidence in a similar setting, **B
    - Log outcomes by band, grade C.
 3. **The ladder is our answer to wheel-spinning.** No study tests a stopping rule, so its rung points (1, 2 and 3 misses in a row) stay grade C, and they are logged.
 
-## 5. Pending notes
+## 5. Worked example or problem first, and open-book practice (`examples_and_open_book.md`)
 
-Timed practice, worked example or problem first with open-book practice, and definitions and transfer are added as their notes arrive.
+**What the evidence says:**
+- **Example first usually wins, but for novices.** Example-then-problem beat problem-then-example in 8 of 10 comparisons pooled by van Harsel et al. 2019 (d = 0.35). Almost every one used learners with no prior instruction and an immediate test.
+- **The closest sample to ours shows no difference.** In van Harsel et al. 2019 Exp. 1, 124 first-year engineering students learning the trapezoidal rule did no better with example-first than with problem-first. Examples only did best.
+- **Example advantages fade at a delay.** At a one-week test they often vanish (Yeo & Fazio 2019; four experiments in van Gog et al. 2015, about 430 learners). Learners who know more do better with problem solving at a delay (Chen et al. 2016).
+- **Expertise reversal.** High support helps low prior knowledge (d = 0.51) and hurts high prior knowledge (d = −0.43), most strongly in higher education (Tetzlaff et al. 2025, 60 studies; secondhand).
+- **Our situation is the comparison arm of productive failure.** Practice after a lecture is the "instruction first" condition in those studies. No study gives productive-failure problems after the lecture.
+- **Examples on demand get copied.** Poor solvers looked back 6.6 times per problem against 2.7 and copied more (Chi et al. 1989, N = 8). A worked solution at hand helped on near-identical problems, not on ones that needed changing (Reed et al. 1985). Clicking hints through to the answer went with worse learning at every skill level (Roll et al., 38 students).
+- **Open book.**
+  - Open-book practice tests matched closed-book ones on delayed retention in the lab (Agarwal et al. 2008).
+  - Reviews and classroom studies lean closed-book (Durning et al. 2016; Permzadian & Cho 2025).
+  - Math evidence is thin.
+- **Expectations shape study.** Expecting an open-book test cut study time and lowered delayed closed-book scores by about 10% (Agarwal & Roediger 2011). Learners adapt to the format they expect (Finley & Benjamin 2012).
+
+**What this means for Toishi:**
+1. **A new skill opens with a problem (decision, design v1.3).** Our students have read the section, with its examples, before the skill is introduced. For them, the closest evidence shows no gain from example-first, the advantage fades by a week, and support turns harmful as prior knowledge grows. This matches the owner's design: the textbook teaches and the app tests. **B**.
+2. **The worked example stays as reference, during the new-skill block only.**
+   - A "Worked example" button opens it.
+   - Opening it before the first answer makes that try aided, a failure for the model (as a hint was), so the evidence stays honest.
+   - Later problems show only the textbook pointer, and sittings show nothing.
+   - The ladder catches a student who didn't read the section: a smaller problem, then a prerequisite, then the textbook pointer and a day off.
+3. **Say up front that certification is closed book.** The course page and the first sitting state that M2 and M3 are certified in closed-book timed sittings. The expectancy evidence says students study more for a closed-book test. **B**.
+4. **This changes the planner and the session (wave 2 follow-up).**
+   - The New role serves a tier-1 problem first, and its WorkItem carries the example card as reference.
+   - The session records an example opened before the first answer as aided.
+   - The page shows the button.
+   - It is built after the three wave 2 branches merge, by one builder, so it lands consistently.
+
+## 6. Pending notes
+
+Timed practice and definitions and transfer are added as their notes arrive.
