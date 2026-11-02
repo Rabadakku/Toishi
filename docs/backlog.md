@@ -236,3 +236,29 @@ read handwritten steps). Plan:
   - Not doing: custom scheduling JavaScript (no user code runs, AGENTS rule 15); SM-2 options (FSRS only); sort orders for problem courses (interleaving is the point; flashcards keep them).
 - **Opt-in "Export my practice log"** (later): the only way to pool data without a sync server. Packs are public, so pooled logs line up problem by problem: per-problem difficulty and population priors, which Anki can't do. Card content is never needed in the export.
 - **Distribution notes** (owner asked how people will get it): start small (one class or a tutoring center), then r/Anki, r/learnmath, r/calculus, r/EngineeringStudents, Show HN. Hosting without GitHub: Cloudflare Pages + R2 or Codeberg. Without the Apple Developer Program, macOS 15+ blocks the first launch (System Settings → Privacy & Security → Open Anyway); the download page needs a three-screenshot guide, and notarization is the first spend worth considering once there are users.
+
+## Content: precalculus geometry first (owner, 2026-11-02, 16:02)
+- The owner often forgets geometry definitions. A precalculus geometry section comes first in the content queue, alongside Calculus I Chapter 4, because related rates (4.1) and optimization (4.7) lean on it:
+  - area and perimeter;
+  - volume and surface area of prisms, cylinders, cones, spheres and pyramids;
+  - similar triangles and proportional sides;
+  - the Pythagorean theorem, special right triangles and the distance formula;
+  - circle arcs, sectors, chords and inscribed angles;
+  - angle facts.
+- Each item is a free-recall definition or formula card plus short problems.
+- The items become background components (`pre.geo.*`) that the Calculus I problems use.
+
+## Learning design proposal (owner, 2026-11-02, 16:01; awaiting the owner's yes)
+- The owner's view: learn the concept from a textbook, lecture or video; in practice, no tutoring, no help, no explanations; extreme difficulty is fine; long struggle is fine; open book.
+- The proposal sent to the owner:
+  - no hints or explanations in the app; each problem names its textbook section;
+  - wrong means try again, any number of times, with no time cutoff; the solution shows only on give-up, which counts as a miss;
+  - new skills start with a problem, with worked examples as optional reference;
+  - after 3 misses in a row, point to the textbook section and the blamed prerequisite (no explanation);
+  - open book while learning; closed-book timed sittings certify M2 and M3;
+  - an optional harder growth band (50–75%).
+- Evidence cited:
+  - Cambridge example sheets followed by supervisions;
+  - productive failure (the gain needs consolidation after the struggle);
+  - wheel-spinning in tutoring-system logs (Beck & Gong 2013);
+  - desirable difficulties require eventual success (Bjork & Bjork 2011).
