@@ -2,7 +2,7 @@
 # One command for the student's Mac: set up the tools, run every check, build the app,
 # run the M0 spike. Everything is logged to logs/mac-run.log so the build agents can
 # read the result from the linked folder without anyone copying output by hand.
-# usage: scripts/mac-run.sh [setup|check|spike|all]   (default: all = setup + checks + app build)
+# usage: scripts/mac-run.sh [setup|check|spike|gates|all]   (default: all = setup + checks + app build; gates = the simulator design gates)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mode="${1:-all}"
@@ -81,6 +81,7 @@ case "$mode" in
   setup) setup || status=1 ;;
   check) run ./scripts/check.sh app || true ;;
   spike) run ./scripts/spike.sh || true ;;
+  gates) run ./scripts/check.sh gates || true ;;
   all)
     # Set up, run every check, build the app and run its self-test. The M0 spike is done;
     # run it again with "spike" if ever needed.
@@ -90,7 +91,7 @@ case "$mode" in
       status=1
     fi
     ;;
-  *) echo "usage: scripts/mac-run.sh [setup|check|spike|all]"; exit 2 ;;
+  *) echo "usage: scripts/mac-run.sh [setup|check|spike|gates|all]"; exit 2 ;;
 esac
 
 say "done (overall status $status)"

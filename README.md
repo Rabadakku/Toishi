@@ -78,7 +78,7 @@ leaving a request file in `.runner/requests/` (see `scripts/mac-runner.sh`):
 ./scripts/install-runner.sh uninstall    # remove it
 ```
 
-A request only names a mode (`setup`, `check`, `spike` or `all`); nothing in it is run as a
+A request only names a mode (`setup`, `check`, `spike`, `gates` or `all`); nothing in it is run as a
 command. What runs is this repo's own scripts, the same ones you would run by hand. Progress is
 in `.runner/status`, output in `logs/mac-run.log`.
 

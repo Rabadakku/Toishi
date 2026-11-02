@@ -104,6 +104,7 @@ xfail_strict = true
 markers = [
     "ui: needs the built web UI (app/web_dist) and a Playwright browser",
     "slow: long benchmarks; run in full mode, skipped by the fast pre-commit check",
+    "gates: the simulator's design gates (an hour or more); only `scripts/check.sh gates`",
 ]
 
 # ---------------------------------------------------------------- import-linter

@@ -14,7 +14,7 @@ from tools.sim2.metrics import gates
 from tools.sim2.run import run_matrix, specs
 from tools.sim2.truth import DEFAULT_TRUTHS, PROFILES
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.gates]
 
 
 def test_calc1_matrix_passes_the_design_gates() -> None:

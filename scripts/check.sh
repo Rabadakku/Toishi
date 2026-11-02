@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 # One-command local check (no CI). Run it before every commit.
-# usage: scripts/check.sh [fast|full|app]          (default: full)
+# usage: scripts/check.sh [fast|full|app|gates]    (default: full)
 #   fast  ruff, mypy, import-linter, pytest without a browser      (git pre-commit hook)
 #   full  fast + web type-check and build + Playwright page tests
 #   app   full + build the .app and run its --self-test           (macOS only)
+#   gates the simulator's design gates alone (tests marked gates; an hour or more)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/lib.sh
 
 mode="${1:-full}"
 case "$mode" in
-  fast | full | app) ;;
-  *) die "unknown mode '$mode'. usage: scripts/check.sh [fast|full|app]" ;;
+  fast | full | app | gates) ;;
+  *) die "unknown mode '$mode'. usage: scripts/check.sh [fast|full|app|gates]" ;;
 esac
+if [[ "$mode" == gates ]]; then
+  require_uv
+  uv sync --locked --quiet
+  step "simulator design gates (pytest -m gates)"
+  uv run --no-sync pytest -q -m gates
+  printf '\nGATES PASSED\n'
+  exit 0
+fi
 if [[ "$mode" == app ]]; then
   require_mac_arm64 "scripts/check.sh app"
 fi
@@ -40,7 +49,7 @@ step "pytest (no browser)"
 if [[ "$mode" == fast ]]; then
   uv run --no-sync pytest -q -m "not ui and not slow"
 else
-  uv run --no-sync pytest -q -m "not ui"
+  uv run --no-sync pytest -q -m "not ui and not gates"
 fi
 
 if [[ "$mode" == fast ]]; then

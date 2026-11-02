@@ -63,7 +63,7 @@ while true; do
 
   started="$(stamp)"
   case "$mode" in
-    setup | check | spike | all) ;;
+    setup | check | spike | gates | all) ;;
     *)
       write_status "$id" "rejected" "rejected" 2 "$started" "$started"
       continue
