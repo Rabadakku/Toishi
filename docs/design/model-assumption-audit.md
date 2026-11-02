@@ -39,6 +39,17 @@ Every assumption of the student model (`core/learner`) and the planner (`core/pl
 | 16 | Learning speeds up as experience accumulates (owner's hypothesis) | No faster learning per practice with more experience once skill slopes are modeled (interaction −0.03 XES, +0.03 Statics). New skills do start a little easier for experienced students (XES +0.11 logits per ln(1 + attempts so far)). No longitudinal study found | Not supported as a rate; small effect on starting accuracy | Don't model now; recheck on our own data |
 | 17 | Practiced skills reach the 90% target | Accuracy after 10+ successes with few failures plateaus at 88.6% (Statics) and 88.9% (XES), on the platforms' own mixed items | At the edge | Owner decision: keep 0.90, or 0.85 at tier 4 |
 
+### Speed, added 2026-11-02 (evening, for pace training)
+
+| # | Assumption | Evidence | Verdict | Action |
+|---|---|---|---|---|
+| 14a | α measured in time order | The Statics loader for #14 read rows in file order, which is not time order for 202 of 333 students. Recomputed in time order: α = 0.035 (was 0.036) | Confirmed | None |
+| 27 | One speed-up rate for every student | EdNet, 1,475 students with 40+ timed correct answers: per-student slopes average 0.027 (median 0.020), estimated true SD 0.08 | Students differ | On held-out times (1,300 students, last 20% held out), shrunk per-student rates beat the shared rate only slightly (MSE 0.2892 vs 0.2930) |
+| 28 | Speed is a stable all-time average (τ_s as a plain mean) | Held-out times are predicted best by recency-weighted speed (half-life about 50 answers) plus the shared speed-up: MSE 0.2839, against 0.2930 for the shared speed-up alone and 0.2950 for no speed-up (EdNet). Statics agrees: half-life 50 is best (1.652 vs 1.702) | Wrong | Track current speed with recency weighting (v1.4, pace training) |
+| 29 | Slow students catch up with practice | EdNet: the slowest third at the start (2.1× the fastest third's time) got 12% faster over their answers, and the fastest third 1%; the gap went from 2.1× to about 1.9× | Not by ordinary practice | Speed has to be trained, not only measured (v1.4) |
+
+Code: `/home/claude/analysis/speed_slopes.py` and `speed_heldout.py`.
+
 ## Verdicts: planner
 
 | # | Assumption | Evidence | Verdict | Action |
