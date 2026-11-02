@@ -1,4 +1,9 @@
-"""The study screen driven like a student: keyboard only, pause, idle note, safe Markdown."""
+"""The study screen driven like a student: keyboard only, pause, idle note, safe Markdown.
+
+Wave 2 learning design: no hints and no "What went wrong?" picker. A wrong try is "Not
+quite" with Retry and Give up; Give up shows the solution (tests/ui/test_learning_design.py
+covers the retry, give-up, sitting and ladder flows in detail).
+"""
 
 import re
 from pathlib import Path
@@ -126,17 +131,14 @@ def test_mock_session_completed_by_keyboard_alone(server: LocalServer, guarded: 
     expect(tid(page, "flashcard-back")).to_be_visible()
     key.press("3")
 
-    # 7. Calculator mark; hints open with H once focus is out of the answer box.
+    # 7. Calculator mark; no hints: H out of the answer box does nothing.
     expect(tid(page, "calculator-mark")).to_be_visible()
     expect(tid(page, "degrees-note")).to_have_count(0)
     expect(tid(page, "field-main")).to_be_focused()
     key.press("Tab")  # out of the field, onto the mode toggle
     key.press("h")
-    expect(tid(page, "hint")).to_have_count(1)
-    key.press("h")
-    expect(tid(page, "hint")).to_have_count(2)
-    expect(tid(page, "hints")).to_contain_text("gave the first step")
-    expect(tid(page, "hint-button")).to_be_disabled()
+    expect(tid(page, "study")).to_have_attribute("data-phase", "answering")
+    expect(tid(page, "study")).not_to_contain_text("Hint")
     key.press("Shift+Tab")
     expect(tid(page, "field-main")).to_be_focused()
     key.type("2.4")
@@ -144,35 +146,36 @@ def test_mock_session_completed_by_keyboard_alone(server: LocalServer, guarded: 
     expect(verdict_outcome(page)).to_have_attribute("data-outcome", "correct")
     key.press("Space")
 
-    # 8. Degrees note; G gives up, U undoes, a known wrong answer shows its feedback.
+    # 8. Degrees note; G gives up: the solution at once, Continue ready. U undoes. A known
+    #    wrong answer is only "Not quite" (Enter retries) until the solution shows its feedback.
     expect(tid(page, "degrees-note")).to_be_visible()
     expect(tid(page, "field-main")).to_be_focused()
     key.press("Tab")
     key.press("g")
     expect(verdict_outcome(page)).to_have_attribute("data-outcome", "incorrect")
-    expect(tid(page, "what-went-wrong")).to_be_visible()
-    expect(tid(page, "continue")).to_be_disabled()
-    key.press("Space")  # not allowed before the picker is answered
+    expect(tid(page, "continue")).to_be_enabled()
     expect(tid(page, "progress")).to_contain_text("6 of 6")
     key.press("u")
     expect(tid(page, "verdict")).to_have_count(0)
-    expect(tid(page, "notice")).to_contain_text("Undone")
+    expect(tid(page, "turn-note")).to_contain_text("Undone")
     expect(tid(page, "field-main")).to_be_focused()
     type_plain(page, "main", "4.60")
     key.press("Enter")
     expect(tid(page, "verdict-main")).to_have_attribute("data-kind", "incorrect")
-    expect(tid(page, "verdict-main")).to_contain_text("Not quite")
-    expect(tid(page, "verdict-main")).to_contain_text("Attempt 1 of 2")
-    expect(tid(page, "what-went-wrong")).to_have_count(0)  # a first miss shows nothing more
-    key.press("Enter")
+    expect(tid(page, "verdict-main")).to_have_text("Not quite")
+    expect(tid(page, "study")).not_to_contain_text("cosine")  # no feedback during retries
+    expect(tid(page, "retry")).to_be_focused()
+    key.press("Enter")  # Retry: the keyboard is back in the answer box
+    expect(page.locator("input[data-testid=field-main]")).to_be_focused()
+    key.press("Enter")  # the same answer again: still "Not quite", as often as it takes
+    expect(tid(page, "retry")).to_be_focused()
+    key.press("g")
     expect(verdict_outcome(page)).to_have_attribute("data-outcome", "incorrect")
     expect(tid(page, "compare")).to_contain_text("Your answer")
     expect(tid(page, "compare")).to_contain_text("Correct answer")
     expect(tid(page, "feedback")).to_contain_text("cosine")
     key.press("d")
     expect(tid(page, "flag-message")).to_contain_text("will not count")
-    key.press("3")  # Misread the question
-    expect(tid(page, "follow-up")).to_contain_text("slip")
     expect(tid(page, "continue")).to_be_enabled()
     key.press("Space")
 
@@ -201,7 +204,7 @@ def test_shortcuts_never_fire_while_typing_except_enter(
     # Every letter and digit key of the shortcut list is just text in the answer box.
     text = "hgeudrpf 12345 sinx"
     type_plain(page, "main", text)
-    expect(tid(page, "hint")).to_have_count(0)
+    expect(tid(page, "verdict")).to_have_count(0)  # G did not give up
     expect(tid(page, "pause-overlay")).to_have_count(0)
     expect(tid(page, "study")).to_have_attribute("data-phase", "answering")
     expect(tid(page, "progress")).to_contain_text("1 of 6")
@@ -213,14 +216,18 @@ def test_shortcuts_never_fire_while_typing_except_enter(
     key.press("Enter")
     expect(tid(page, "verdict-main")).to_have_attribute("data-kind", "invalid")
     expect(tid(page, "verdict-main")).to_contain_text("Check your answer")
-    # An invalid answer never uses up an attempt.
-    expect(tid(page, "verdict-main")).not_to_contain_text("Attempt")
+    # An invalid answer never counts as a try: no "Not quite", no Retry.
+    expect(tid(page, "retry")).to_have_count(0)
 
-    # Outside a field the same keys act: Tab onto the toggle, then H shows a hint.
+    # Outside a field the same keys act: Tab onto the toggle, then P pauses and F shows
+    # the sidebar.
     expect(tid(page, "field-main")).to_be_focused()
     key.press("Tab")
-    key.press("h")
-    expect(tid(page, "hint")).to_have_count(1)
+    key.press("p")
+    expect(tid(page, "pause-overlay")).to_be_visible()
+    key.press("Escape")
+    expect(tid(page, "pause-overlay")).to_have_count(0)
+    key.press("Tab")
     key.press("f")  # focus mode off: the sidebar appears
     expect(page.get_by_role("navigation", name="Main")).to_be_visible()
     guarded.assert_clean()
@@ -366,8 +373,7 @@ def test_math_field_toggle_and_answer_shape_helpers(server: LocalServer, guarded
     expect(tid(page, "field-main")).to_be_focused()
     page.keyboard.press("Tab")
     page.keyboard.press("g")
-    expect(tid(page, "what-went-wrong")).to_be_visible()
-    page.keyboard.press("5")
+    expect(tid(page, "verdict")).to_have_attribute("data-outcome", "incorrect")
     page.keyboard.press("Space")
     expect(tid(page, "field-a")).to_be_focused()
 
@@ -460,50 +466,31 @@ def test_typing_log_gives_a_plain_logarithm(server: LocalServer, guarded: Guarde
     guarded.assert_clean()
 
 
-def give_up_and_wait_for_picker(page: Page) -> None:
-    """On the first mock problem: leave the answer box, G gives up, the miss picker appears."""
-    expect(tid(page, "field-main")).to_be_focused()
-    page.keyboard.press("Tab")
-    page.keyboard.press("g")
-    expect(tid(page, "what-went-wrong")).to_be_visible()
-
-
 @pytest.mark.parametrize("height", [WINDOW.height, 600, WINDOW.min_size[1]])
-def test_miss_picker_is_in_view_above_the_action_bar_and_has_the_keyboard(
+def test_not_quite_and_the_solution_are_in_view_and_have_the_keyboard(
     server: LocalServer, guarded: Guarded, height: int
 ) -> None:
     page = guarded.page
     page.set_viewport_size({"width": WINDOW.width, "height": height})
     page.goto(f"{server.origin}/index.html?bridge=mock#/study")
-    give_up_and_wait_for_picker(page)
+    expect(tid(page, "field-main")).to_be_focused()
 
-    picker = tid(page, "what-went-wrong")
-    note = picker.get_by_text("Pick one to continue")
-    first, last = tid(page, "wrong-slip"), tid(page, "wrong-cant-tell")
-    # The group, not an option, has the focus; Continue waits for a choice.
-    expect(picker).to_be_focused()
-    expect(tid(page, "continue")).to_be_disabled()
-    expect(note).to_be_in_viewport(ratio=1)
-    expect(first).to_be_in_viewport(ratio=1)
-    expect(last).to_be_in_viewport(ratio=1)
-    bar = tid(page, "actions").bounding_box()
-    shown = note.bounding_box()
-    assert bar is not None
-    assert shown is not None
-    assert shown["y"] + shown["height"] <= bar["y"], "the note is hidden behind the action bar"
+    # "Not quite": Retry has the keyboard and, with Give up, sits on screen in the action bar.
+    type_plain(page, "main", "4x^3")
+    page.keyboard.press("Enter")
+    expect(tid(page, "verdict-main")).to_be_in_viewport()
+    expect(tid(page, "retry")).to_be_focused()
+    expect(tid(page, "retry")).to_be_in_viewport(ratio=1)
+    expect(tid(page, "give-up")).to_be_in_viewport(ratio=1)
 
-    # Space is not a pick; a digit is.
-    page.keyboard.press("Space")
-    expect(picker).to_be_focused()
-    options = picker.locator('[data-testid^="wrong-"]')
-    assert (
-        options.evaluate_all("els => els.map(e => e.getAttribute('aria-pressed'))") == ["false"] * 4
-    )
-    expect(tid(page, "continue")).to_be_disabled()
-    page.keyboard.press("3")
-    expect(tid(page, "wrong-misread")).to_have_attribute("aria-pressed", "true")
-    expect(tid(page, "follow-up")).to_be_visible()
+    # Give up: the verdict is on screen, the review region has the keyboard, Space goes on.
+    page.keyboard.press("g")
+    expect(tid(page, "verdict")).to_be_in_viewport()
+    expect(tid(page, "review")).to_be_focused()
     expect(tid(page, "continue")).to_be_enabled()
+    expect(tid(page, "continue")).to_be_in_viewport(ratio=1)
+    page.keyboard.press("Space")
+    expect(tid(page, "progress")).to_contain_text("2 of 6")
     guarded.assert_clean()
 
 
@@ -517,29 +504,39 @@ def test_pause_is_not_offered_on_the_summary(server: LocalServer, guarded: Guard
     guarded.assert_clean()
 
 
-def test_hint_button_hands_the_focus_back_to_the_answer_box(
+def test_retry_hands_the_focus_back_to_the_answer_box(
     server: LocalServer, guarded: Guarded
 ) -> None:
     page = guarded.page
     page.goto(f"{server.origin}/index.html?bridge=mock#/study")
     expect(tid(page, "field-main")).to_be_focused()
-    tid(page, "hint-button").click()
-    expect(tid(page, "hint")).to_have_count(1)
+    page.keyboard.type("5x")
+    page.keyboard.press("Enter")
+    expect(tid(page, "retry")).to_be_focused()
+    tid(page, "retry").click()  # the pointer works too
     expect(tid(page, "field-main")).to_be_focused()
-    tid(page, "hint-button").click()
-    expect(tid(page, "hint")).to_have_count(2)
-    expect(tid(page, "field-main")).to_be_focused()
+    expect(tid(page, "submit")).to_be_visible()  # back to Submit, Not sure and Give up
+    expect(tid(page, "retry")).to_have_count(0)
 
-    # Several boxes: the one that was active gets the focus back, not the first.
+    # Several boxes: right parts settle; Retry goes back to the box that was active.
     page.keyboard.press("Tab")
     page.keyboard.press("g")
-    expect(tid(page, "what-went-wrong")).to_be_visible()
-    page.keyboard.press("5")
+    expect(tid(page, "verdict")).to_have_attribute("data-outcome", "incorrect")
     page.keyboard.press("Space")
     expect(tid(page, "field-a")).to_be_focused()
+    type_plain(page, "a", "(-inf, 0) U (2, inf)")
     tid(page, "field-b").click()
-    expect(tid(page, "field-b")).to_be_focused()
-    tid(page, "hint-button").click()
-    expect(tid(page, "hint")).to_have_count(1)
-    expect(tid(page, "field-b")).to_be_focused()
+    expect(tid(page, "field-b")).to_be_focused()  # MathLive takes the focus a moment later
+    type_plain(page, "b", "(2, -4)")  # a known wrong answer (the minimum)
+    tid(page, "field-c").click()
+    expect(tid(page, "field-c")).to_be_focused()
+    type_plain(page, "c", "(0, 0)")
+    page.keyboard.press("Enter")
+    expect(tid(page, "verdict-a")).to_have_attribute("data-kind", "correct")
+    expect(tid(page, "verdict-b")).to_have_text("Not quite")
+    expect(tid(page, "verdict-c")).to_have_text("Not quite")
+    expect(tid(page, "study")).not_to_contain_text("That is the minimum")
+    expect(tid(page, "retry")).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(page.locator("input[data-testid=field-c]")).to_be_focused()
     guarded.assert_clean()

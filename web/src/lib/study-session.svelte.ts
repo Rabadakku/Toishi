@@ -5,9 +5,7 @@ import type {
   AnswerPreview,
   AttemptResult,
   Confidence,
-  Diagnosis,
   FlagKind,
-  HintReveal,
   PartAnswer,
   PartVerdictView,
   PartView,
@@ -19,13 +17,13 @@ import type {
   Summary,
   TimingReport,
   Turn,
-  WentWrongChoice,
 } from './types';
 
 /**
- * answering   a problem (or a typed flashcard) is open for an answer
+ * answering   a problem (or a typed flashcard) is open for an answer; after a wrong try it
+ *             waits on Retry or Give up (`retryReady`), then takes the next try
  * checking    a call is in flight
- * review      finished: verdict, solution, "What went wrong?" after a miss
+ * review      finished: verdict and worked solution (correct, or given up)
  * self-grade  the student grades the answer against the solution
  * example     a worked example is shown; Space continues
  * front/back  a flashcard: Space shows the back, 1 to 4 rate it
@@ -67,15 +65,6 @@ const PREVIEW_DEBOUNCE_MS = 160;
 const INPUT_THROTTLE_MS = 1_000;
 const TICK_MS = 15_000;
 const DRAFT_VERSION = 1;
-
-/** The fixed options of the "What went wrong?" picker, keyed 1 to 5 (steps are tapped). */
-export const PICKER_OPTIONS: readonly { n: number; choice: WentWrongChoice; label: string; hint: string }[] = [
-  { n: 1, choice: 'setup', label: 'Step 0: set up', hint: "Didn't know where to start or which method" },
-  { n: 2, choice: 'slip', label: 'Careless slip', hint: 'My steps matched' },
-  { n: 3, choice: 'misread', label: 'Misread the question', hint: '' },
-  { n: 4, choice: 'other-method', label: 'A different valid method', hint: 'I solved it another way' },
-  { n: 5, choice: 'cant-tell', label: "Can't tell", hint: '' },
-];
 
 export const SELF_GRADES: readonly { n: number; grade: SelfGrade; label: string }[] = [
   { n: 1, grade: 'matched', label: 'Matched the solution' },
@@ -144,22 +133,24 @@ export class StudySession {
   problem: ProblemView | null = $derived(this.turn?.type === 'problem' ? this.turn.problem : null);
   progress: Progress | null = $derived(this.turn?.type === 'problem' ? this.turn.progress : null);
   summary: Summary | null = $derived(this.turn?.type === 'summary' ? this.turn.summary : null);
-  lighter = $derived(this.turn?.lighter ?? false);
 
   parts: Record<string, PartState> = $state({});
-  hints: HintReveal[] = $state([]);
   result: AttemptResult | null = $state.raw(null);
-  diagnosis: Diagnosis | null = $state(null);
-  /** The picker choice made: an option, or a tapped step number. */
-  picked: { choice: WentWrongChoice; step: number | null } | null = $state(null);
   flagMessage: string | null = $state(null);
   /** Find-the-error picks: the step (given when highlighted) and the reason's index. */
   findStep: number | null = $state(null);
   findReason: number | null = $state(null);
   /** Self-graded with a rubric: which steps the student's work matched. */
   ticks: boolean[] = $state([]);
-  /** An inline note ("Type an answer first", "Undone. The problem is back."). */
+  /** The session's note for the item on screen (a skill set aside, "Undone ..."): it stays until the next item. */
+  turnNote: string | null = $state(null);
+  /** A passing inline note ("Type an answer first"); the next keystroke clears it. */
   notice: string | null = $state(null);
+  /**
+   * After "Not quite": the screen offers Retry and Give up and nothing else. Retry (or any
+   * edit) gives the keyboard back to the answer box for the next try.
+   */
+  retryReady = $state(false);
   breakDue = $state(false);
   /** Counts changes that should move the keyboard focus (a new item, a retry ...). */
   focusToken = $state(0);
@@ -223,12 +214,14 @@ export class StudySession {
     return this.result?.solution ?? null;
   }
 
+  /** A wrong try is on screen ("Not quite"): the item is still open. */
   get isRetry(): boolean {
     return this.phase === 'answering' && this.result?.outcome === 'retry';
   }
 
-  get mustDiagnose(): boolean {
-    return this.phase === 'review' && !!this.solution?.needs_diagnosis && this.picked === null;
+  /** Another try is allowed (problems: any number; an older bridge says nothing, so yes). */
+  get canRetry(): boolean {
+    return this.isRetry && this.result?.can_retry !== false;
   }
 
   get itemKey(): string | null {
@@ -254,6 +247,22 @@ export class StudySession {
 
   async startMore(mode: 'extra' | 'daily'): Promise<void> {
     await this.begin({ mode });
+  }
+
+  /** Retry after "Not quite": the answer box gets the keyboard back for the next try. */
+  retry(): boolean {
+    if (!this.retryReady || !this.canRetry || this.paused) return false;
+    this.retryReady = false;
+    this.notice = null;
+    this.focusToken += 1;
+    this.scheduleIdle();
+    return true;
+  }
+
+  /** An answer box took the focus (a click or Tab): that is a retry too. */
+  enterField(id: string): void {
+    this.activePartId = id;
+    if (this.retryReady && this.phase === 'answering') this.retryReady = false;
   }
 
   /** Listen for the window losing focus (TIME-2), input (TIME-3) and the Edit menu. */
@@ -329,16 +338,13 @@ export class StudySession {
   }
 
   private applyTurn(turn: Turn): void {
-    const keep = turn.type === 'problem' && turn.problem?.item_key === this.itemKey && this.phase === 'answering';
     this.turn = turn;
-    this.notice = turn.message || null;
+    this.turnNote = turn.message || null;
+    this.notice = null;
     if (turn.break_due) this.breakDue = true;
-    if (keep) return; // same item, still answering (a Lighter set switch): keep what is typed
     this.clearTimers();
     this.result = null;
-    this.hints = [];
-    this.diagnosis = null;
-    this.picked = null;
+    this.retryReady = false;
     this.flagMessage = null;
     this.findStep = null;
     this.findReason = null;
@@ -360,18 +366,12 @@ export class StudySession {
     for (const part of answerParts(problem)) parts[partId(part)] = emptyPart();
     this.restoreDraft(parts, problem.draft);
     this.parts = parts;
-    this.hints = problem.hints_shown.map((text, i) => ({
-      item_key: problem.item_key,
-      index: i + 1,
-      total: problem.card.hint_count,
-      text,
-      rating_effect: i + 1 === problem.card.hint_count ? 'again' : 'hard',
-    }));
     this.clock.reset(problem.active_ms);
     this.resumedAttempt = problem.active_ms > 0;
     this.beginAttempt();
     if (turn.result) {
-      this.clock.stop();
+      // A finished answer stops the clock; "Not quite" (resumed after a reload) keeps it going.
+      if (turn.result.outcome !== 'retry') this.clock.stop();
       this.applyResult(turn.result);
     } else if (problem.kind === 'example') {
       this.phase = 'example';
@@ -448,8 +448,12 @@ export class StudySession {
   setValue(id: string, mode: EntryMode, value: string): void {
     const state = this.parts[id];
     if (!state) return;
+    const before = mode === 'math' ? state.latex : state.text;
     if (mode === 'math') state.latex = value;
     else state.text = value;
+    // MathLive also reports Enter as an input event, a moment after the answer is graded.
+    // An unchanged value is no edit: it must not end "Not quite" or start the next try's clock.
+    if (value === before) return;
     this.noteKeystroke();
     this.schedulePreview(id);
   }
@@ -469,6 +473,7 @@ export class StudySession {
     const part = this.answerParts.find((p) => partId(p) === id);
     if (!id || !part || isChoicePart(part) || !this.parts[id]) return false;
     this.setMode(id, this.parts[id].mode === 'math' ? 'text' : 'math');
+    this.retryReady = false; // editing the answer is a retry
     this.focusToken += 1;
     return true;
   }
@@ -508,6 +513,7 @@ export class StudySession {
   private noteKeystroke(): void {
     if (this.firstKeyAtMs === null) this.firstKeyAtMs = this.clock.elapsedMs();
     this.notice = null;
+    this.retryReady = false; // editing the answer is a retry
   }
 
   private answerFor(part: PartView): PartAnswer {
@@ -674,13 +680,17 @@ export class StudySession {
       return;
     }
     if (result.outcome === 'retry') {
+      // "Not quite", Retry and Give up, and nothing else: no feedback until the solution.
       this.phase = 'answering';
+      this.retryReady = true;
+      this.notice = null;
       this.resumedAttempt = false;
       this.beginAttempt();
       this.focusToken += 1;
       this.scheduleIdle();
       return;
     }
+    this.retryReady = false;
     this.clock.stop();
     this.clearTimers();
     this.stillWorking = false;
@@ -694,31 +704,6 @@ export class StudySession {
       this.phase = 'review';
     }
     this.focusToken += 1;
-  }
-
-  async hint(): Promise<boolean> {
-    const problem = this.problem;
-    if (!problem || this.phase !== 'answering' || this.paused) return false;
-    if (this.hints.length >= problem.card.hint_count || problem.practice_test) return false;
-    try {
-      this.hints.push(await this.api.study_hint({ item_key: problem.item_key }));
-    } catch (error) {
-      this.fail(error);
-    }
-    return true;
-  }
-
-  async diagnose(choice: WentWrongChoice, step: number | null = null): Promise<boolean> {
-    const problem = this.problem;
-    if (!problem || !this.mustDiagnose) return false;
-    this.picked = { choice, step };
-    try {
-      this.diagnosis = await this.api.study_diagnose({ item_key: problem.item_key, choice, step });
-    } catch (error) {
-      this.picked = null;
-      this.fail(error);
-    }
-    return true;
   }
 
   async flag(kind: FlagKind): Promise<boolean> {
@@ -746,11 +731,11 @@ export class StudySession {
     return true;
   }
 
-  /** Space: on to the next item, once the picker (if any) has been answered. */
+  /** Space: on to the next item. */
   async next(): Promise<boolean> {
     const key = this.itemKey;
     const ok = this.phase === 'review' || this.phase === 'example' || this.phase === 'back' || this.phase === 'self-grade';
-    if (!key || !ok || this.mustDiagnose || this.paused) return false;
+    if (!key || !ok || this.paused) return false;
     if (this.phase === 'self-grade') return false;
     if (this.phase === 'back' && !this.result) return false; // rate it first
     const before = this.busy();
@@ -801,14 +786,6 @@ export class StudySession {
         lighter: false,
         mode: summary.mode,
       });
-    } catch (error) {
-      this.fail(error);
-    }
-  }
-
-  async setLighter(on: boolean): Promise<void> {
-    try {
-      this.applyTurn(await this.api.study_set_lighter({ on }));
     } catch (error) {
       this.fail(error);
     }
@@ -900,12 +877,10 @@ export class StudySession {
           return true;
         }
         if (!answering) return false;
+        // After "Not quite", Enter is Retry: the keyboard goes back to the answer box.
+        if (this.retryReady) return this.retry();
         if (this.answerParts.length === 0) void this.showSolution();
         else void this.submit(action.unsure ? 'unsure' : 'sure');
-        return true;
-      case 'hint':
-        if (!answering || (this.problem?.card.hint_count ?? 0) <= this.hints.length) return false;
-        void this.hint();
         return true;
       case 'give_up':
         if (!answering || this.problem?.kind !== 'problem') return false;
@@ -917,7 +892,6 @@ export class StudySession {
           void this.showSolution();
           return true;
         }
-        if (this.mustDiagnose) return false;
         void this.next();
         return reviewing || this.phase === 'example' || this.phase === 'back';
       case 'too_easy':
@@ -947,12 +921,6 @@ export class StudySession {
 
   /** Digits choose in whichever list is active. */
   private pick(n: number): boolean {
-    if (this.phase === 'review') {
-      const option = PICKER_OPTIONS.find((o) => o.n === n);
-      if (!option || !this.mustDiagnose) return false;
-      void this.diagnose(option.choice);
-      return true;
-    }
     if (this.phase === 'self-grade') {
       if (this.ticks.length > 0) {
         if (n > this.ticks.length) return false;

@@ -8,20 +8,23 @@ import type {
   BackupList,
   CardMedia,
   CardMediaRequest,
-  Diagnosis,
-  DiagnoseRequest,
+  CourseSettings,
+  Exam,
+  ExamIn,
   FlagRequest,
   FlagResult,
   FlashcardRequest,
   Forecast,
   GiveUpRequest,
-  HintReveal,
   ItemRequest,
   Library,
   LibraryStateRequest,
+  ModelView,
   Preferences,
   ProfileState,
   ReadAnswerRequest,
+  RefitReport,
+  SkillsView,
   StartRequest,
   SubmitRequest,
   Summary,
@@ -79,7 +82,7 @@ export interface BridgeApi {
   /** The media a card shows, as URLs on this origin (images, sounds, an imported deck's CSS). */
   library_card_media(request: CardMediaRequest): Promise<CardMedia>;
 
-  /** Home: today's problems and minutes per course, exams. */
+  /** Home: today's minutes, items by role, hours to keep pace, behind and set-aside skills, sittings, notes. */
   study_today(): Promise<TodayView>;
   study_forecast(): Promise<Forecast>;
   /** Begin a session, or resume today's open one at the same problem (QUE-16). */
@@ -88,28 +91,40 @@ export interface BridgeApi {
   study_current(): Promise<Turn>;
   /** Parse what the student typed and say how it was read. Never an attempt. */
   study_read_answer(request: ReadAnswerRequest): Promise<AnswerPreview>;
-  /** Grade the answer on screen (AGENTS.md rule 5: committed when graded). */
+  /** Grade the answer on screen (rule 5: committed when graded). A wrong try is "Not quite" with can_retry; only the first try counts. */
   study_submit(request: SubmitRequest): Promise<AttemptResult>;
+  /** Give up: the full solution, and the item ends (before any answer, an aided first try: a miss). */
   study_give_up(request: GiveUpRequest): Promise<AttemptResult>;
   /** Self-graded problems: the solution (and rubric) before grading; nothing is graded. */
   study_show_solution(request: ItemRequest): Promise<AttemptResult>;
-  /** Next hint on the ladder, one per call. */
-  study_hint(request: ItemRequest): Promise<HintReveal>;
   /** Save the active time and draft (QUE-16); says when a break is due. */
   study_tick(request: TickRequest): Promise<Tick>;
-  /** Record the "What went wrong?" pick (grades the miss with it). */
-  study_diagnose(request: DiagnoseRequest): Promise<Diagnosis>;
-  /** Space: continue to the next item, or the summary. */
+  /** Space: continue to the next item (re-planned from today's first tries), or the summary. */
   study_next(request: ItemRequest): Promise<Turn>;
   /** "Too easy" (E), "I was right" (D), "Report problem" (R). */
   study_flag(request: FlagRequest): Promise<FlagResult>;
   /** Undo the last answer (U, Edit > Undo Last Answer): the problem comes back. */
   study_undo(): Promise<Turn>;
-  /** Lighter set on or off for the rest of today's session (QUE-10). */
-  study_set_lighter(request: { on: boolean }): Promise<Turn>;
   study_rate_flashcard(request: FlashcardRequest): Promise<AttemptResult>;
   /** End the session now: the summary with tomorrow's forecast. */
   study_end(): Promise<Summary>;
+
+  /** Course setup: a course's schedule, targets, exams and sections (from the Library). */
+  course_settings_get(course_id: string): Promise<CourseSettings>;
+  course_settings_set(settings: Omit<CourseSettings, 'course_title' | 'exams' | 'sections' | 'has_pace'>): Promise<CourseSettings>;
+  /** Add an exam, or change one (with its exam_id). */
+  exam_save(exam: ExamIn): Promise<Exam>;
+  exam_delete(exam_id: number): Promise<void>;
+
+  /** The Skills screen: each skill's state, track, milestones, level, readiness and pace. */
+  skills_get(course_id: string): Promise<SkillsView>;
+
+  /** The student model (Settings): parameters, the last refit, calibration tables. */
+  model_get(): Promise<ModelView>;
+  /** Refit now: the report says whether the new values were kept. */
+  model_refit(): Promise<RefitReport>;
+  /** Back to the starting values, as a new current version. */
+  model_reset(): Promise<ModelView>;
 }
 
 declare global {

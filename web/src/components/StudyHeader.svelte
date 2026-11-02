@@ -9,11 +9,7 @@
     reason: Reason | null;
     /** What the item is when it is not a numbered problem ("Flashcard", "Worked example"). */
     itemLabel?: string | null;
-    lighter?: boolean;
-    /** Lighter set can be switched (a daily session). */
-    canLighter?: boolean;
     canEnd?: boolean;
-    onlighter?: (on: boolean) => void;
     onend?: () => void;
     reasonOpen: boolean;
     paused: boolean;
@@ -30,8 +26,6 @@
     progress,
     reason,
     itemLabel = null,
-    lighter = false,
-    canLighter = false,
     canEnd = false,
     reasonOpen,
     paused,
@@ -41,7 +35,6 @@
     onreason,
     onpause,
     onfocusmode,
-    onlighter,
     onend,
   }: Props = $props();
 </script>
@@ -72,15 +65,6 @@
   </div>
 
   <div class="right">
-    {#if canLighter}
-      <Button
-        variant="quiet"
-        aria-pressed={lighter}
-        title="Lighter set: the same due skills with easier problems, and no new skills"
-        data-testid="lighter-toggle"
-        onclick={() => onlighter?.(!lighter)}>{lighter ? 'Lighter set on' : 'Lighter set'}</Button
-      >
-    {/if}
     {#if canEnd}
       <Button variant="quiet" title="End the session now and see the summary" data-testid="end-session" onclick={() => onend?.()}
         >End</Button

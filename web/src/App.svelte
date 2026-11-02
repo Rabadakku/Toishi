@@ -7,11 +7,14 @@
   import { loadPreferences } from './lib/settings.svelte';
   import { bridge, ui } from './lib/ui.svelte';
   import { getPractice } from './lib/practice-api';
+  import CourseSetup from './pages/CourseSetup.svelte';
   import Home from './pages/Home.svelte';
   import Library from './pages/Library.svelte';
+  import Model from './pages/Model.svelte';
   import Placeholder from './pages/Placeholder.svelte';
   import Restore from './pages/Restore.svelte';
   import Settings from './pages/Settings.svelte';
+  import Skills from './pages/Skills.svelte';
   import Study from './pages/Study.svelte';
   import Welcome from './pages/Welcome.svelte';
   import type { Profile, ProfileState } from './lib/types';
@@ -101,6 +104,12 @@
       <Study />
     {:else if router.route === 'library'}
       <Library />
+    {:else if router.route === 'course'}
+      <CourseSetup />
+    {:else if router.route === 'skills'}
+      <Skills />
+    {:else if router.route === 'model'}
+      <Model />
     {:else if router.route === 'browse'}
       <Placeholder
         testid="page-browse"

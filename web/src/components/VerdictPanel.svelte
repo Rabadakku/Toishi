@@ -36,6 +36,9 @@
     {#if solution.skill_name}
       <p class="skill">Skill: <strong data-testid="skill-name">{solution.skill_name}</strong></p>
     {/if}
+    {#if result.outcome === 'correct' && result.first_try_counted === false}
+      <p class="note" data-testid="first-try-note">Right on a later try. Only the first try counts.</p>
+    {/if}
     {#if multi && result.verdicts.length > 0}
       <ul class="parts">
         {#each result.verdicts as verdict, i (i)}

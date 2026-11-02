@@ -5,14 +5,12 @@
 
   interface Props {
     steps: StepView[];
-    /** Steps are buttons: the student taps the first one where their work differed. */
+    /** Find-the-error: steps are buttons, and the student picks the wrong one. */
     pickable?: boolean;
     picked?: number | null;
-    /** A known wrong answer pointed at this step: offered first, marked "Likely". */
-    preselected?: number | null;
     /** Find-the-error: the step that is actually wrong. */
     flagged?: number | null;
-    /** Key hint chips by step index (step 0 carries key 1 in the picker). */
+    /** Key hint chips by step number (the digit that picks it). */
     keys?: Record<number, string>;
     onpick?: (index: number) => void;
     label?: string;
@@ -24,7 +22,6 @@
     steps,
     pickable = false,
     picked = null,
-    preselected = null,
     flagged = null,
     keys = {},
     onpick,
@@ -38,7 +35,6 @@
     <li
       class="step"
       class:picked={picked === step.number}
-      class:likely={preselected === step.number && picked === null}
       class:flagged={flagged === step.number}
       data-step={step.number}
     >
@@ -60,9 +56,6 @@
           <span class="label">{step.label}</span>
         {/if}
         {#if showSkill && step.skill_name}<span class="skill">{step.skill_name}</span>{/if}
-        {#if preselected === step.number && picked === null}
-          <span class="tag likely-tag">Likely</span>
-        {/if}
         {#if flagged === step.number}
           <span class="tag wrong-tag"><Icon name="x-circle" size={1} /> Wrong step</span>
         {/if}
@@ -89,10 +82,6 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     transition: border-color var(--dur) ease-out;
-  }
-
-  .step.likely {
-    border-color: var(--accent);
   }
 
   .step.picked {
@@ -169,10 +158,6 @@
     border-radius: 999px;
     font-size: var(--fs-caption);
     font-weight: 600;
-  }
-
-  .likely-tag {
-    color: var(--accent);
   }
 
   .wrong-tag {

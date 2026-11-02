@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { IconName } from '../lib/icons';
-  import { navigate, ROUTES, router, type RouteId } from '../lib/router.svelte';
+  import { navFor, navigate, ROUTES, router, type NavId } from '../lib/router.svelte';
   import Icon from './Icon.svelte';
 
-  const ICON_FOR: Record<RouteId, IconName> = {
+  const ICON_FOR: Record<NavId, IconName> = {
     home: 'home',
     study: 'study',
     library: 'library',
@@ -20,7 +20,7 @@
       <li>
         <a
           href={`#/${route.id}`}
-          aria-current={router.route === route.id ? 'page' : undefined}
+          aria-current={navFor(router.route) === route.id ? 'page' : undefined}
           data-testid={`nav-${route.id}`}
           onclick={(event) => {
             event.preventDefault();

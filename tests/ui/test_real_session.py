@@ -145,8 +145,7 @@ def give_up(r: Real) -> None:
     key.press("Tab")  # out of the answer box, so G is a shortcut
     key.press("g")
     expect(r.tid("verdict")).to_have_attribute("data-outcome", "incorrect")
-    key.press("5")  # Can't tell
-    expect(r.tid("follow-up")).to_be_visible()
+    expect(r.tid("continue")).to_be_enabled()  # no "What went wrong?" to answer first
 
 
 def test_real_session_on_the_test_pack_by_keyboard(real: Real) -> None:
@@ -196,8 +195,6 @@ def test_real_session_on_the_test_pack_by_keyboard(real: Real) -> None:
             wait_phase(r, "review")
             key.press("Space")
         elif phase == "review":
-            if r.tid("what-went-wrong").count():
-                key.press("5")
             key.press("Space")
         elif kind == "flashcard":  # a typed flashcard
             answer_correctly(r, r.current_card())
@@ -207,13 +204,8 @@ def test_real_session_on_the_test_pack_by_keyboard(real: Real) -> None:
             text = single_typed(card)
             item = r.tid("study").get_attribute("data-item")
             if not done["correct"] and text is not None:
-                # A hint (H once out of the box), a pause and resume, then the right answer.
-                if card.hints:
-                    expect(r.tid("field-main")).to_be_focused()
-                    key.press("Tab")
-                    key.press("h")
-                    expect(r.tid("hint")).to_have_count(1)
-                    key.press("Shift+Tab")
+                # No hints to ask for (wave 2): a pause and resume, then the right answer.
+                expect(r.page.get_by_role("button", name="Hint")).to_have_count(0)
                 key.press("Escape")
                 expect(r.tid("pause-overlay")).to_be_visible()
                 expect(r.tid("study")).to_have_attribute("data-paused", "true")
@@ -225,31 +217,28 @@ def test_real_session_on_the_test_pack_by_keyboard(real: Real) -> None:
                 key.press("Space")
                 done["correct"] = True
             elif not done["wrong"] and text is not None:
-                # Wrong twice: "Not quite", then the solution and the picker. U undoes it.
+                # Wrong: "Not quite" with Retry and Give up only. Enter retries (the box gets
+                # the keyboard back); G shows the solution. U undoes the answer.
                 type_plain(r, WRONG)
                 key.press("Enter")
                 expect(r.tid("verdict-main")).to_contain_text("Not quite")
+                expect(r.tid("retry")).to_be_focused()
+                expect(r.tid("submit")).to_have_count(0)
                 key.press("Enter")
+                expect(page.locator("input[data-testid=field-main]")).to_be_focused()
+                key.press("Tab")
+                key.press("g")
                 expect(r.tid("verdict")).to_have_attribute("data-outcome", "incorrect")
-                expect(r.tid("what-went-wrong")).to_be_visible()
                 key.press("u")
-                expect(r.tid("notice")).to_contain_text("Undone")
+                expect(r.tid("turn-note")).to_contain_text("Undone")
                 expect(r.tid("study")).to_have_attribute("data-item", item or "")
                 wait_phase(r, "answering")
                 type_plain(r, WRONG)
                 key.press("Enter")
                 expect(r.tid("verdict-main")).to_contain_text("Not quite")
-                key.press("Enter")
-                expect(r.tid("what-went-wrong")).to_be_visible()
-                expect(r.tid("continue")).to_be_disabled()
-                # Tap the first step where the work went differently (keyboard: focus, Enter).
-                steps = page.locator("[data-testid^=step-]")
-                if steps.count() > 1:
-                    steps.nth(1).focus()
-                    key.press("Enter")
-                else:
-                    key.press("1")
-                expect(r.tid("follow-up")).to_be_visible()
+                expect(r.tid("retry")).to_be_focused()
+                key.press("g")  # the keyboard is on Retry, so G gives up
+                expect(r.tid("verdict")).to_have_attribute("data-outcome", "incorrect")
                 expect(r.tid("continue")).to_be_enabled()
                 key.press("Space")
                 done["wrong"] = True

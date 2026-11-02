@@ -1,5 +1,7 @@
 <script lang="ts">
+  import Button from '../components/Button.svelte';
   import Tex from '../components/Tex.svelte';
+  import { navigate } from '../lib/router.svelte';
   import { bridge } from '../lib/ui.svelte';
   import { preferences, setTextSize, setTheme } from '../lib/settings.svelte';
   import { TEXT_SIZE_MAX, TEXT_SIZE_MIN, type ThemeChoice } from '../lib/types';
@@ -59,6 +61,17 @@
     </div>
     <div class="sample problem-sample" data-testid="text-sample">
       <p>Find the critical numbers of <Tex latex={String.raw`f(x) = x^4 - 2x^2`} />. The math grows with the text.</p>
+    </div>
+  </div>
+
+  <div class="group model" data-testid="model-settings">
+    <h2>Student model</h2>
+    <p class="muted">
+      How the app predicts your chance of a right first try, how well those predictions have matched what you did,
+      and when it last refitted them to your practice.
+    </p>
+    <div>
+      <Button variant="secondary" data-testid="open-model" onclick={() => navigate('model')}>Open the student model</Button>
     </div>
   </div>
 
@@ -184,7 +197,8 @@
     line-height: var(--lh-problem);
   }
 
-  .diagnostics h2 {
+  .diagnostics h2,
+  .model h2 {
     font-size: 1.125rem;
   }
 

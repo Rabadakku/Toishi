@@ -9,8 +9,12 @@
  * - The item on screen is named by its `item_key` (a plan item), never by a card id.
  * - Text fields ending in `_md` use the card format's Markdown with `\( \)` and `\[ \]`
  *   math, images and tables. The page renders them through KaTeX, never as raw HTML.
- * - Nothing shown before an answer names the problem's section or skill (Study screen 7):
- *   skill names appear only in the solution, the summary and the library.
+ * - Nothing shown before an answer names the problem's skill (Study screen 7): skill names
+ *   appear only in the solution, the summary, the library and the Skills screen. The
+ *   textbook section is shown under the problem (wave 2 learning design), except in a
+ *   closed-book sitting.
+ * - The wave 2 planner payloads (roles, sittings, course settings, skills, the student
+ *   model) follow docs/design/wave2-integration.md section 6.
  */
 
 // ---------------------------------------------------------------------------
@@ -78,7 +82,6 @@ export interface CardView {
   /** The question (or a flashcard's front, a cloze card's text). */
   prompt_md: string;
   parts: PartView[];
-  hint_count: number;
   calculator: boolean;
   /** 'radians' unless the card says 'degrees'. */
   angles: string;
@@ -101,16 +104,45 @@ export interface CardView {
   type_answer: boolean;
 }
 
+/** What the planner has an item work on (core.plan Role). Flashcards have none. */
+export type Role = 'new' | 'growth' | 'maintenance' | 'check' | 'practice-test' | 'focused' | 'sitting';
+
+/** A skill's milestones: M1 (tier 2), M2 (tier 3 at pace), M3 (the target tier at pace), Keep. */
+export type MilestoneName = 'M1' | 'M2' | 'M3' | 'keep';
+
+/** Where the problem's section is in the textbook: "OpenStax Calculus Volume 1", "4.1". */
+export interface Textbook {
+  book: string;
+  section: string;
+}
+
+/**
+ * An item of a closed-book, timed sitting. Design v1.3: the time limit belongs to the item's
+ * skill block (that skill's problems in the sitting), like a block of an exam.
+ */
+export interface SittingView {
+  id: string;
+  /** 1-based place in the whole sitting: "problem 2 of 5". */
+  index: number;
+  total: number;
+  /**
+   * The limit of the item's skill block: the sum of the standard times of that skill's
+   * problems in the sitting. Shown, never enforced: nothing is cut off at the limit.
+   */
+  time_limit_ms: number;
+  /** Active time already spent on the block's earlier problems; the page adds this item's running time. */
+  block_elapsed_ms: number;
+}
+
 /** The item on screen (Turn.problem). */
 export interface ProblemView {
   item_key: string;
   kind: ItemKind;
   card: CardView;
+  /** The tag at the top and its "Why is this here?" sentence. */
   reason: Reason;
   attempts_allowed: number;
   tries_used: number;
-  /** Hints already revealed (a resumed problem shows them again). */
-  hints_shown: string[];
   /** What was typed before a quit or reload (study_tick), opaque to Python. */
   draft: string | null;
   /** Active time already counted for this item (a resumed problem continues from it). */
@@ -119,6 +151,17 @@ export interface ProblemView {
   target_ms: number | null;
   untimed: boolean;
   practice_test: boolean;
+  /** The planner's role for the item; null for flashcards. */
+  role: Role | null;
+  /**
+   * The planner's reason code ('ladder:smaller', 'ladder:prerequisite', 'band' ...). Section 6
+   * called it `reason`, which the tag above already is; agreed with W1 as `plan_reason`.
+   */
+  plan_reason: string | null;
+  /** The textbook section, from the section's deck and the pack's source. */
+  textbook: Textbook | null;
+  /** Set on the items of a closed-book sitting. */
+  sitting: SittingView | null;
 }
 
 /** "7 of 20" and the running tally. */
@@ -207,19 +250,9 @@ export interface AnswerPreview {
   hints: string[];
 }
 
-/** A request about the item on screen (hint, next, flag ...). */
+/** A request about the item on screen (next, show solution ...). */
 export interface ItemRequest {
   item_key: string;
-}
-
-/** The "What went wrong?" choices. 'step' needs `step` (0 is "set up"). */
-export type WentWrongChoice = 'step' | 'setup' | 'slip' | 'misread' | 'other-method' | 'cant-tell';
-
-/** study_diagnose. */
-export interface DiagnoseRequest {
-  item_key: string;
-  choice: WentWrongChoice;
-  step?: number | null;
 }
 
 /** Buttons after grading: E too easy, D dispute ("I was right"), R report. */
@@ -250,7 +283,8 @@ export interface TickRequest {
 
 /** study_start: begin today's session (or resume it), or another kind of session. */
 export interface StartRequest {
-  mode?: 'daily' | 'lighter' | 'focused' | 'extra' | 'practice-test';
+  /** The focused, weak-spot and lighter modes went with the old engine (wave 2 section 4). */
+  mode?: 'daily' | 'extra' | 'practice-test';
   /** An Untimed session (TIME-6); null: the profile's default. */
   untimed?: boolean | null;
   count?: number | null;
@@ -276,7 +310,10 @@ export interface PartVerdictView {
   read_as: string | null;
   /** The checker's message (an invalid answer's reason). */
   message: string;
-  /** A known wrong answer matched: its feedback (Markdown). */
+  /**
+   * A known wrong answer matched: its feedback (Markdown). Only results that carry the
+   * solution have it; a retry result ("Not quite") carries no feedback and no wrong_step.
+   */
   feedback: string | null;
   /** ... and the solution step it comes from (@step). */
   wrong_step?: number | null;
@@ -308,8 +345,6 @@ export interface SolutionView {
   target_ms: number | null;
   /** "3:40 · target 4:00"; null in Untimed sessions. */
   time_text: string | null;
-  /** Show "What went wrong?" (after a miss). */
-  needs_diagnosis: boolean;
   /** Missed while marked "sure". */
   confident_error: boolean;
   /** Offer "Too easy" (a clean first-try success). */
@@ -319,8 +354,6 @@ export interface SolutionView {
   rubric: string[];
   /** Find-the-error: the shown work, set beside the correct solution. */
   shown_work: StepView[];
-  /** "What went wrong?": the step to preselect (a matched known wrong answer's @step). */
-  preselect_step?: number | null;
 }
 
 /** How a find-the-error answer went: the step, the reason and the corrected value. */
@@ -334,9 +367,10 @@ export interface FindErrorView {
 }
 
 /**
- * retry: "Not quite", try again. invalid: fix the form (not an attempt). correct /
- * incorrect: finished, `solution` set. self-grade: the checker can't decide; the student
- * grades against `solution`. recorded: a flashcard or practice-test answer was saved.
+ * retry: "Not quite", try again or give up. invalid: fix the form (not an attempt). correct /
+ * incorrect: finished, `solution` set (a give-up is incorrect). self-grade: the checker
+ * can't decide; the student grades against `solution`. recorded: a flashcard or
+ * practice-test answer was saved.
  */
 export type Outcome = 'retry' | 'correct' | 'incorrect' | 'invalid' | 'self-grade' | 'recorded';
 
@@ -354,28 +388,10 @@ export interface AttemptResult {
   /** A break reminder is due (50 minutes of active time by default). */
   break_due: boolean;
   find_error: FindErrorView | null;
-}
-
-/** One rung of the hint ladder. Any hint caps the rating at Hard; the last counts as Again. */
-export interface HintReveal {
-  item_key: string;
-  /** 1-based. */
-  index: number;
-  total: number;
-  text: string;
-  rating_effect: 'hard' | 'again';
-}
-
-/** What the app did with a "What went wrong?" pick. */
-export interface Diagnosis {
-  item_key: string;
-  choice: string;
-  /** One quiet line about what comes next. */
-  follow_up: string;
-  rating: number | null;
-  slip_accepted: boolean;
-  /** Skills a quick check was planned on. */
-  checks: string[];
+  /** After "Not quite": the item stays open for another try. Problems allow any number. */
+  can_retry: boolean;
+  /** This answer was the item's first try, the one that counts; later tries are practice. */
+  first_try_counted: boolean;
 }
 
 /** The outcome of a flag. */
@@ -422,14 +438,19 @@ export interface ExamLine {
   practice_test: boolean;
 }
 
-/** A suggestion the app makes instead of acting silently (QUE-8, QUE-13). */
-export interface Proposal {
-  kind: 'overload' | 'backlog';
-  message: string;
-  options: string[];
+/** Where a weekly-hours figure comes from: the student's own history, the course standard, none. */
+export type HoursBasis = 'history' | 'standard' | 'none';
+
+/** A closed-book sitting planned today and the skills it certifies (by name). */
+export interface PlannedSitting {
+  id: string;
+  skills: string[];
 }
 
-/** Home: "Today: 20 problems, about 55 minutes". Never an overdue count (QUE-7). */
+/**
+ * Home: "Today: 20 problems, about 55 minutes". Never an overdue count (QUE-7). The old
+ * engine's proposals and vacation went with it; the planner's notes replace the proposals.
+ */
 export interface TodayView {
   day: string;
   problems: number;
@@ -437,13 +458,25 @@ export interface TodayView {
   flashcards: number;
   courses: CourseLine[];
   exams: ExamLine[];
-  proposals: Proposal[];
   session_open: boolean;
   done_today: boolean;
-  vacation: boolean;
   extra_practice_available: boolean;
   /** Leech flashcards, not shown until rewritten. */
   flashcards_to_rewrite?: number;
+  /** Today's items by role (new, growth, maintenance, check, sitting ...). */
+  by_role: Partial<Record<Role, number>>;
+  /** Hours a week that keep every course on pace; null when there is no figure. */
+  hours_to_keep_pace: number | null;
+  hours_basis: HoursBasis;
+  /** The courses' reference hours outside class per week. */
+  standard_hours: number | null;
+  /** Skills behind their milestone deadlines, by name. */
+  behind: string[];
+  /** Skills set aside for the rest of today (the stuck ladder's last rung), by name. */
+  set_aside: string[];
+  sittings: PlannedSitting[];
+  /** The planner's notices, in plain words. */
+  notes: string[];
 }
 
 /** A miss listed on the summary, with its tag. */
@@ -511,11 +544,169 @@ export interface Turn {
   /** The verdict screen, when resuming after an answer that was not continued from. */
   result: AttemptResult | null;
   summary: Summary | null;
-  /** A one-line note ("Undone. The problem is back."). */
+  /**
+   * A one-line note for the item on screen ("Undone. The problem is back.", or a skill set
+   * aside for today with its textbook pointer). It stays until the next item.
+   */
   message: string;
   break_due: boolean;
+  /** The Lighter set went with the old engine; the page ignores this. */
   lighter: boolean;
   mode: string;
+}
+
+// ---------------------------------------------------------------------------
+// Course setup (course_settings_get / _set, exam_save / _delete)
+// ---------------------------------------------------------------------------
+
+/** An exam as the student enters it (exam_save); `exam_id` is set when editing one. */
+export interface ExamIn {
+  exam_id?: number;
+  course_id: string;
+  name: string;
+  /** The study day of the exam (YYYY-MM-DD). */
+  day: string;
+  /** The sections it covers, by deck. */
+  scope_decks: string[];
+  /** Its own accuracy target; null: the course's. */
+  target?: number | null;
+  /** How long it is. */
+  minutes?: number | null;
+  /** How many problems it has (a practice test uses the same number, else 10). */
+  problems?: number | null;
+}
+
+/** A saved exam. */
+export interface Exam extends ExamIn {
+  exam_id: number;
+}
+
+/** A section of a course, in course order, with its class hours (null without pace data). */
+export interface SectionRef {
+  deck: string;
+  title: string;
+  hours: number | null;
+}
+
+/** A course's schedule and targets. */
+export interface CourseSettings {
+  course_id: string;
+  course_title: string;
+  /** The first class (YYYY-MM-DD), or null. */
+  start: string | null;
+  /** "My class is at section X today": the section and the day it was said. Wins over `start`. */
+  aligned: { deck: string; day: string } | null;
+  /** 0.75 to 1.5: how fast the class moves against the standard (higher is faster). */
+  pace_factor: number;
+  /** 0.80 to 0.95: the chance of a right first try to reach. */
+  accuracy_target: number;
+  /** 3 to 5: the tier that accuracy must hold at. */
+  target_tier: number;
+  /** The last day of the course (YYYY-MM-DD); after it, skills drop to Keep. Null: self-study. */
+  end: string | null;
+  keep_target: number;
+  keep_tier: number;
+  /** Practice difficulty: standard aims at 70-90% right, hard at 50-75%. */
+  growth_band: 'standard' | 'hard';
+  exams: Exam[];
+  sections: SectionRef[];
+  /** The pack gives class hours per section; without them nothing can be dated. */
+  has_pace: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Skills (skills_get)
+// ---------------------------------------------------------------------------
+
+/** One milestone of a skill: its tier, its deadline and whether it is certified. */
+export interface MilestoneView {
+  name: MilestoneName;
+  tier: number;
+  /** YYYY-MM-DD; null for Keep, or with no schedule. */
+  deadline: string | null;
+  certified: boolean;
+}
+
+/** One skill on the Skills screen. */
+export interface SkillRow {
+  skill_id: string;
+  name: string;
+  deck: string;
+  /** not-introduced, new, growth, maintenance, keep, slip-limited, struggling. */
+  state: string;
+  track: 'ahead' | 'on-track' | 'behind';
+  /** The day it is introduced (YYYY-MM-DD), or null with no schedule. */
+  intro: string | null;
+  milestones: MilestoneView[];
+  /** The highest tier with every tier at or below it certified. */
+  level: number | null;
+  /** The calibrated predicted chance of a right first try at its current (or certified) tier. */
+  readiness: number | null;
+  /** Typical solve time at or under the standard time; null before any timed first try. */
+  pace_ok: boolean | null;
+  /** Set aside for the rest of today. */
+  set_aside: boolean;
+}
+
+/** skills_get: one course's skills, in course order. */
+export interface SkillsView {
+  course_id: string;
+  day: string;
+  skills: SkillRow[];
+}
+
+// ---------------------------------------------------------------------------
+// The student model (model_get, model_refit, model_reset)
+// ---------------------------------------------------------------------------
+
+/** One row of a calibration table: first tries, the mean predicted chance, the share right. */
+export interface Bin {
+  label: string;
+  n: number;
+  predicted: number;
+  observed: number;
+}
+
+/** One block of parameters in a refit: held-out log loss per first try, before and after. */
+export interface RefitBlock {
+  /** accuracy or time. */
+  name: string;
+  current: number;
+  candidate: number;
+  p_value: number;
+  adopted: boolean;
+}
+
+/** What a refit did. */
+export interface RefitReport {
+  /** When it ran (epoch ms). */
+  at: number;
+  /** First tries in the log it used. */
+  attempts: number;
+  /** Some block's new values were kept. */
+  adopted: boolean;
+  p_value: number;
+  blocks: RefitBlock[];
+}
+
+/** The calibration tables: by tier, by days since the skill was practiced, by skills in the problem. */
+export interface Calibration {
+  by_tier: Bin[];
+  by_gap: Bin[];
+  by_components: Bin[];
+}
+
+/** The student model's current parameters and how well it has predicted. */
+export interface ModelView {
+  version: string;
+  source: 'prior' | 'refit' | 'reset';
+  /** When this version was made (epoch ms). */
+  created_at: number;
+  params: Record<string, number | number[]>;
+  last_refit: RefitReport | null;
+  calibration: Calibration;
+  /** First tries in the log. */
+  attempts: number;
 }
 
 // ---------------------------------------------------------------------------

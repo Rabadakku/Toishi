@@ -1,7 +1,8 @@
 /**
- * The study screen's keys (spec: Study screen, "Keys"):
- *   Enter submit · Shift+Enter submit unsure · H hint · G give up · Space continue ·
- *   E too easy · 1-5 in the picker · D dispute · R report · Esc or P pause · U undo.
+ * The study screen's keys (spec: Study screen, "Keys"; wave 2 has no hints and no picker):
+ *   Enter submit (Retry after "Not quite") · Shift+Enter submit unsure · G give up ·
+ *   Space continue · E too easy · 1-5 in a list (choices, steps, ratings) · D dispute ·
+ *   R report · Esc or P pause · U undo.
  * Extras: ` switches the answer box between math and plain text, F toggles focus mode.
  *
  * Letters, digits and Space never fire while the student is typing in a field. Enter and
@@ -11,7 +12,6 @@
 
 export type ShortcutAction =
   | { type: 'submit'; unsure: boolean }
-  | { type: 'hint' }
   | { type: 'give_up' }
   | { type: 'continue' }
   | { type: 'too_easy' }
@@ -44,8 +44,6 @@ export function actionForKey(event: KeyLike, typing: boolean): ShortcutAction | 
   }
   if (typing) return null;
   switch (event.key.toLowerCase()) {
-    case 'h':
-      return { type: 'hint' };
     case 'g':
       return { type: 'give_up' };
     case ' ':

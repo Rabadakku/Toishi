@@ -1,8 +1,12 @@
 /** A tiny hash router (#/study?mode=extra). The page is static files, so hashes need no server. */
 
-export type RouteId = 'home' | 'study' | 'library' | 'browse' | 'stats' | 'settings';
+/** The sidebar's screens. */
+export type NavId = 'home' | 'study' | 'library' | 'browse' | 'stats' | 'settings';
 
-export const ROUTES: readonly { id: RouteId; label: string }[] = [
+/** Every page: the sidebar's, plus pages opened from one of them (they sit under it). */
+export type RouteId = NavId | 'course' | 'skills' | 'model';
+
+export const ROUTES: readonly { id: NavId; label: string }[] = [
   { id: 'home', label: 'Home' },
   { id: 'study', label: 'Study' },
   { id: 'library', label: 'Library' },
@@ -11,8 +15,25 @@ export const ROUTES: readonly { id: RouteId; label: string }[] = [
   { id: 'settings', label: 'Settings' },
 ];
 
+/** Course setup and Skills open from the Library (per course); the student model from Settings. */
+const SUBPAGES: Record<Exclude<RouteId, NavId>, NavId> = {
+  course: 'library',
+  skills: 'library',
+  model: 'settings',
+};
+
+function isSubpage(id: string): id is keyof typeof SUBPAGES {
+  return Object.hasOwn(SUBPAGES, id);
+}
+
+/** The sidebar entry a page sits under. */
+export function navFor(route: RouteId): NavId {
+  return isSubpage(route) ? SUBPAGES[route] : (route as NavId);
+}
+
 export function parseRoute(hash: string): RouteId {
-  const id = hash.replace(/^#\/?/, '').split(/[/?]/)[0];
+  const id = hash.replace(/^#\/?/, '').split(/[/?]/)[0] ?? '';
+  if (isSubpage(id)) return id;
   return ROUTES.find((route) => route.id === id)?.id ?? 'home';
 }
 

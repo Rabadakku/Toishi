@@ -1,25 +1,53 @@
 import type { BridgeApi } from './bridge';
-import { sampleItems, type PartKey, type SampleItem } from './sample-problems';
+import { addDays, localDay } from './format';
+import { textbookLine } from './plan-words';
+import {
+  ladderSession,
+  sampleItems,
+  sittingSession,
+  type LadderPlan,
+  type PartKey,
+  type SampleItem,
+  type SampleSession,
+} from './sample-problems';
 import {
   TEXT_SIZE_DEFAULT,
   type AnswerPreview,
   type AttemptResult,
+  type Bin,
+  type CourseSettings,
+  type Exam,
+  type ExamIn,
+  type HoursBasis,
   type Library,
+  type MilestoneView,
+  type ModelView,
   type PartAnswer,
   type PartVerdictView,
   type Preferences,
   type ProfileState,
+  type RefitReport,
+  type Role,
   type SectionState,
+  type SkillRow,
   type SolutionView,
   type Summary,
+  type TodayView,
   type Turn,
 } from './types';
 
 /**
  * In-page stand-in for the Python bridge (page tests, `npm run dev`, a plain browser).
  * It grades by comparing normalised text (the real checker is SymPy-based and lives in
- * core/), but it follows the same contract as app/api.py: item keys, attempts, invalid
- * answers that cost nothing, answers held on the verdict screen until Continue, undo.
+ * core/), but it follows the same contract as app/api.py: item keys, unlimited retries of
+ * which only the first try counts, give-up, invalid answers that cost nothing, answers held
+ * on the verdict screen until Continue, undo, and a small stuck ladder and sitting.
+ *
+ * Mock-only URL switches (with `?bridge=mock`, never reachable in the app):
+ *   scenario=ladder   three power-rule slots that the stuck ladder rewrites after misses
+ *   scenario=sitting  a warm-up problem, then a closed-book sitting of two skill blocks
+ *   hours=history|standard|none  where Home's hours-to-keep-pace figure comes from
+ *   prompt=...        replaces the first problem's Markdown (hostile-input tests)
  */
 
 // --- reading answers -------------------------------------------------------
@@ -108,44 +136,93 @@ function grade(key: PartKey, answerType: string, answer: PartAnswer): { correct:
   return { correct: false, feedback: wrong?.feedback ?? null };
 }
 
+/**
+ * A wrong try is "Not quite" and nothing else: a retry result carries no matched wrong-answer
+ * feedback and no wrong_step. Only a result with the solution (a give-up) has them.
+ */
+function withoutFeedback(verdict: PartVerdictView): PartVerdictView {
+  return { ...verdict, feedback: null, wrong_step: null, message: verdict.status === 'invalid' ? verdict.message : '' };
+}
+
 // --- the session -----------------------------------------------------------
+
+type Scenario = 'daily' | 'ladder' | 'sitting';
+
+interface MockOptions {
+  scenario: Scenario;
+  prompt: string | null;
+  hours: HoursBasis;
+}
+
+/** The mock-only URL switches; nothing but `?bridge=mock` turns them on. */
+function mockOptions(): MockOptions {
+  const params = new URLSearchParams(window.location.search);
+  const mock = params.get('bridge') === 'mock';
+  const scenario = params.get('scenario');
+  const hours = params.get('hours');
+  return {
+    scenario: mock && (scenario === 'ladder' || scenario === 'sitting') ? scenario : 'daily',
+    prompt: mock ? params.get('prompt') : null,
+    hours: mock && (hours === 'history' || hours === 'none') ? hours : 'standard',
+  };
+}
+
+function sessionFor(scenario: Scenario): SampleSession {
+  if (scenario === 'ladder') return ladderSession();
+  if (scenario === 'sitting') return sittingSession();
+  return { items: sampleItems(), ladder: null };
+}
 
 interface Held {
   result: AttemptResult;
-  correct: boolean;
-  /** A miss submitted sure (not a give-up or the last hint): a confident error once graded. */
-  sure: boolean;
 }
 
 interface Logged {
   index: number;
   item: SampleItem;
+  /** The first try was right (what counts); false after a miss or a give-up. */
   correct: boolean;
+  /** The first try's verdict; null for items with none (examples). */
+  first: boolean | null;
   rating: number | null;
   active_ms: number;
 }
 
-const ATTEMPTS = 2;
-const SECTIONS: { id: string; title: string; unit: string }[] = [
-  { id: 'Sample Calculus::Derivatives::Power rule', title: 'Power rule', unit: 'Sample Calculus::Derivatives' },
-  { id: 'Sample Calculus::Derivatives::Chain rule', title: 'Chain rule', unit: 'Sample Calculus::Derivatives' },
-  { id: 'Sample Calculus::Applications::Shape of a graph', title: 'Shape of a graph', unit: 'Sample Calculus::Applications' },
-];
+/** Problems allow any number of tries; this says "no limit" in attempts_allowed. */
+const NO_LIMIT = 0;
+
+/** One try only: which-method and find-the-error items (graded on the whole pick). */
+function oneTry(item: SampleItem): boolean {
+  return item.kind !== 'problem' || item.card.kind === 'method' || item.card.kind === 'find-error';
+}
 
 class MockSession {
-  items = sampleItems();
+  items: SampleItem[];
+  readonly ladder: LadderPlan | null;
   index = 0;
   tries = 0;
-  hints = 0;
-  /** The last wrong try's verdicts: still "Your answer" after a give-up. */
+  /** The first try's verdict, once there is one. */
+  first: boolean | null = null;
+  /** The last wrong try's verdicts (with their feedback): "Your answer" after a give-up. */
   lastVerdicts: PartVerdictView[] = [];
   held: Held | null = null;
   log: Logged[] = [];
   /** The last answer can be undone until the next one is submitted. */
   undoable = false;
+  /** The plan before the last Continue (the ladder may have rewritten it), for undo. */
+  undoPlan: { items: SampleItem[]; setAside: string[]; note: MockSession['note'] } | null = null;
   ended = false;
   activeMs = 0;
   draft: string | null = null;
+  /** Skills set aside for today by the ladder. */
+  setAside: string[] = [];
+  /** A one-line note for the item at `index` (a skill set aside). */
+  note: { index: number; text: string } | null = null;
+
+  constructor(plan: SampleSession) {
+    this.items = plan.items;
+    this.ladder = plan.ladder;
+  }
 
   get item(): SampleItem | undefined {
     return this.items[this.index];
@@ -160,29 +237,43 @@ class MockSession {
     return this.items.filter((i) => i.kind === 'problem');
   }
 
+  /** Active time already spent on the earlier problems of this item's sitting block. */
+  blockElapsed(item: SampleItem): number {
+    const sitting = item.sitting;
+    if (!sitting) return 0;
+    return this.log
+      .filter((l) => l.item.sitting?.id === sitting.id && l.item.skill.id === item.skill.id)
+      .reduce((sum, l) => sum + l.active_ms, 0);
+  }
+
   turn(message = ''): Turn {
     const item = this.item;
-    const base = { session_id: 1, message, break_due: false, lighter: false, mode: 'daily' };
+    const base = { session_id: 1, break_due: false, lighter: false, mode: 'daily' };
     if (!item || this.ended) {
-      return { ...base, type: 'summary', problem: null, progress: null, result: null, summary: this.summary() };
+      return { ...base, message, type: 'summary', problem: null, progress: null, result: null, summary: this.summary() };
     }
     const done = this.log.filter((l) => l.item.kind === 'problem');
+    const note = this.note?.index === this.index ? this.note.text : '';
     return {
       ...base,
+      message: message || note,
       type: 'problem',
       problem: {
         item_key: this.key(),
         kind: item.kind,
         card: item.card,
         reason: item.reason,
-        attempts_allowed: item.kind === 'problem' ? ATTEMPTS : 1,
+        attempts_allowed: oneTry(item) ? 1 : NO_LIMIT,
         tries_used: this.tries,
-        hints_shown: item.hints.slice(0, this.hints),
         draft: this.draft,
         active_ms: this.activeMs,
         target_ms: null,
         untimed: false,
         practice_test: false,
+        role: item.role,
+        plan_reason: item.plan_reason,
+        textbook: item.textbook,
+        sitting: item.sitting ? { ...item.sitting, block_elapsed_ms: this.blockElapsed(item) } : null,
       },
       progress: {
         position: done.length + (item.kind === 'problem' && !this.held ? 1 : 0),
@@ -240,10 +331,9 @@ class MockSession {
       active_ms: activeMs,
       target_ms: target,
       time_text: clock(activeMs) + (target ? ` · target ${clock(target)}` : ''),
-      needs_diagnosis: !correct && item.kind === 'problem',
       // Like the app: only the graded answer's recorded effect, so never before grading.
       confident_error: false,
-      can_mark_too_easy: correct && this.tries <= 1 && this.hints === 0 && !unsure,
+      can_mark_too_easy: correct && this.tries <= 1 && !unsure,
       textbook_ref: null,
       rubric: [],
       shown_work: item.card.shown_work,
@@ -256,6 +346,7 @@ class MockSession {
     verdicts: PartVerdictView[],
     unsure: boolean,
     activeMs: number,
+    firstTry: boolean,
     findError: AttemptResult['find_error'] = null,
   ): AttemptResult {
     const result: AttemptResult = {
@@ -264,32 +355,73 @@ class MockSession {
       outcome: correct ? 'correct' : 'incorrect',
       verdicts,
       message: correct ? '' : 'Here is the full solution.',
-      solution: { ...this.solution(item, correct, unsure, activeMs), needs_diagnosis: !correct && item.kind === 'problem' && !findError },
+      solution: this.solution(item, correct, unsure, activeMs),
       tries_used: this.tries,
-      attempts_allowed: ATTEMPTS,
+      attempts_allowed: oneTry(item) ? 1 : NO_LIMIT,
       rating: null,
       break_due: false,
+      can_retry: false,
+      first_try_counted: firstTry,
     };
-    this.held = { result, correct, sure: !correct && !unsure && this.hints < item.hints.length };
+    this.held = { result };
     this.undoable = true;
     return result;
   }
 
-  /** Continue: log the held answer, move on. */
+  /** Continue: log the held answer, let the ladder re-plan, move on. */
   advance(): void {
     const item = this.item;
+    this.undoPlan = { items: [...this.items], setAside: [...this.setAside], note: this.note };
     if (item && this.held) {
-      this.log.push({ index: this.index, item, correct: this.held.correct, rating: null, active_ms: this.held.result.solution?.active_ms ?? 0 });
+      const first = this.first ?? false;
+      this.log.push({ index: this.index, item, correct: first, first, rating: null, active_ms: this.held.result.solution?.active_ms ?? 0 });
+      this.climbLadder(item);
     } else if (item && item.kind === 'example') {
-      this.log.push({ index: this.index, item, correct: true, rating: null, active_ms: 0 });
+      this.log.push({ index: this.index, item, correct: true, first: null, rating: null, active_ms: 0 });
     }
     this.index += 1;
+    this.reset();
+  }
+
+  reset(): void {
     this.tries = 0;
-    this.hints = 0;
+    this.first = null;
     this.lastVerdicts = [];
     this.held = null;
     this.activeMs = 0;
     this.draft = null;
+  }
+
+  /**
+   * The stuck ladder (wave2-planner.md section 1), for the ladder session's skill: a first-try
+   * miss swaps its next slot for a smaller problem, a second for a prerequisite, and a third
+   * sets the skill aside for today with its textbook pointer. A ladder item replaces a slot,
+   * never adds one.
+   */
+  private climbLadder(item: SampleItem): void {
+    const ladder = this.ladder;
+    if (!ladder || item.slot !== ladder.skill.id) return;
+    let streak = 0;
+    for (const entry of [...this.log].reverse()) {
+      if (entry.item.slot !== ladder.skill.id || entry.first === null) continue;
+      if (entry.first) break;
+      streak += 1;
+    }
+    if (streak === 0) return;
+    const later = (it: SampleItem, i: number): boolean => i > this.index && it.slot === ladder.skill.id;
+    if (streak >= 3) {
+      this.items = this.items.filter((it, i) => !later(it, i));
+      this.setAside = [...this.setAside, ladder.skill.name];
+      this.note = {
+        index: this.index + 1,
+        text: `${ladder.skill.name} is set aside for today. See ${textbookLine(ladder.textbook)}.`,
+      };
+      return;
+    }
+    const next = this.items.findIndex(later);
+    if (next < 0) return;
+    const rung = streak === 1 ? ladder.smaller : ladder.prerequisite;
+    this.items[next] = { ...rung, card: { ...rung.card }, slot: ladder.skill.id };
   }
 }
 
@@ -299,13 +431,140 @@ function userMessage(text: string): Error {
   return error;
 }
 
-/**
- * Test hook, mock bridge only: `?bridge=mock&prompt=...` replaces the first problem's
- * Markdown, so tests can feed the renderer hostile input. Never reachable in the real app.
- */
-function promptOverride(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('bridge') === 'mock' ? params.get('prompt') : null;
+// --- courses, skills and the model ----------------------------------------------
+
+interface MockSection {
+  id: string;
+  title: string;
+  unit: string;
+  course: string;
+  /** Class hours; null in a pack without pace data. */
+  hours: number | null;
+}
+
+const CALCULUS = 'Sample Calculus';
+const STATISTICS = 'Sample Statistics';
+
+const SECTIONS: MockSection[] = [
+  { id: 'Sample Calculus::Derivatives::Power rule', title: 'Power rule', unit: 'Sample Calculus::Derivatives', course: CALCULUS, hours: 3 },
+  { id: 'Sample Calculus::Derivatives::Chain rule', title: 'Chain rule', unit: 'Sample Calculus::Derivatives', course: CALCULUS, hours: 3 },
+  { id: 'Sample Calculus::Applications::Shape of a graph', title: 'Shape of a graph', unit: 'Sample Calculus::Applications', course: CALCULUS, hours: 4 },
+  { id: 'Sample Statistics::Describing data::Mean and median', title: 'Mean and median', unit: 'Sample Statistics::Describing data', course: STATISTICS, hours: null },
+];
+
+const COURSES = [CALCULUS, STATISTICS];
+
+type StoredSettings = Omit<CourseSettings, 'course_title' | 'exams' | 'sections' | 'has_pace'>;
+
+function initialSettings(today: string): Map<string, StoredSettings> {
+  const base = {
+    aligned: null,
+    pace_factor: 1,
+    accuracy_target: 0.9,
+    target_tier: 4,
+    keep_target: 0.8,
+    keep_tier: 3,
+    growth_band: 'standard' as const,
+  };
+  return new Map([
+    [CALCULUS, { ...base, course_id: CALCULUS, start: addDays(today, -30), end: addDays(today, 60) }],
+    [STATISTICS, { ...base, course_id: STATISTICS, start: null, end: null }],
+  ]);
+}
+
+function milestones(intro: string | null, certified: number, targetTier = 4): MilestoneView[] {
+  const due = (days: number): string | null => (intro ? addDays(intro, days) : null);
+  return [
+    { name: 'M1', tier: 2, deadline: due(5), certified: certified >= 1 },
+    { name: 'M2', tier: 3, deadline: due(14), certified: certified >= 2 },
+    { name: 'M3', tier: targetTier, deadline: due(28), certified: certified >= 3 },
+    { name: 'keep', tier: 3, deadline: null, certified: false },
+  ];
+}
+
+function sampleSkills(course: string, today: string, setAside: readonly string[]): SkillRow[] {
+  const [power, chain, shape] = SECTIONS.map((s) => s.id);
+  const row = (r: Omit<SkillRow, 'set_aside'>): SkillRow => ({ ...r, set_aside: setAside.includes(r.name) });
+  if (course === STATISTICS) {
+    return [
+      row({
+        skill_id: 'stat.center.mean-median',
+        name: 'Mean and median',
+        deck: SECTIONS[3]!.id,
+        state: 'not-introduced',
+        track: 'on-track',
+        intro: null,
+        milestones: milestones(null, 0),
+        level: null,
+        readiness: null,
+        pace_ok: null,
+      }),
+    ];
+  }
+  const ago = (days: number): string => addDays(today, -days);
+  return [
+    row({ skill_id: 'calc1.deriv.power-rule', name: 'Power rule', deck: power!, state: 'maintenance', track: 'ahead', intro: ago(20), milestones: milestones(ago(20), 2), level: 3, readiness: 0.93, pace_ok: true }),
+    row({ skill_id: 'calc1.deriv.sum-rule', name: 'Sum and difference rules', deck: power!, state: 'growth', track: 'on-track', intro: ago(6), milestones: milestones(ago(6), 1), level: 2, readiness: 0.84, pace_ok: true }),
+    row({ skill_id: 'calc1.deriv.chain-rule', name: 'Chain rule', deck: chain!, state: 'growth', track: 'behind', intro: ago(16), milestones: milestones(ago(16), 1), level: 2, readiness: 0.71, pace_ok: false }),
+    row({ skill_id: 'calc1.deriv.implicit', name: 'Implicit differentiation', deck: chain!, state: 'not-introduced', track: 'on-track', intro: addDays(today, 3), milestones: milestones(addDays(today, 3), 0), level: null, readiness: null, pace_ok: null }),
+    row({ skill_id: 'calc1.shape.first-derivative-test', name: 'First derivative test', deck: shape!, state: 'new', track: 'on-track', intro: today, milestones: milestones(today, 0), level: null, readiness: 0.62, pace_ok: null }),
+    row({ skill_id: 'calc1.shape.concavity', name: 'Concavity', deck: shape!, state: 'slip-limited', track: 'behind', intro: ago(10), milestones: milestones(ago(10), 0), level: 1, readiness: 0.81, pace_ok: true }),
+  ];
+}
+
+/** The model's starting values (core.learner SharedParams, without the version). */
+const PRIOR_PARAMS: Record<string, number | number[]> = {
+  slip: 0.02,
+  delta4: 0.3,
+  delta5: 0.7,
+  calib_a: [0, 0, 0, 0, 0],
+  calib_b: 1,
+  phi: 0.05,
+  tau: 0.6931471805599453,
+  sigma_t: 0.45,
+  gamma: 0.37,
+  rho: 0,
+  alpha: 0.05,
+  q_drift: 0.01,
+  kappa: 0.95,
+  same_day_weight: 0.25,
+  prior_new_mean: 0.6190392084062235,
+  prior_new_var: 2,
+  prior_background_mean: 3.4760986898352733,
+  prior_background_var: 1,
+  fsrs_weights: [],
+};
+
+function bins(rows: [string, number, number, number][]): Bin[] {
+  return rows.map(([label, n, predicted, observed]) => ({ label, n, predicted, observed }));
+}
+
+const CALIBRATION: ModelView['calibration'] = {
+  by_tier: bins([
+    ['Tier 1', 48, 0.92, 0.94],
+    ['Tier 2', 96, 0.84, 0.82],
+    ['Tier 3', 52, 0.71, 0.69],
+    ['Tier 4', 16, 0.58, 0.5],
+    ['Tier 5', 0, 0, 0],
+  ]),
+  by_gap: bins([
+    ['First practice', 30, 0.64, 0.6],
+    ['Under 1 day', 70, 0.86, 0.88],
+    ['1 to 7 days', 72, 0.8, 0.78],
+    ['8 to 30 days', 34, 0.74, 0.68],
+    ['Over 30 days', 6, 0.7, 0.67],
+  ]),
+  by_components: bins([
+    ['1 skill', 90, 0.86, 0.87],
+    ['2 skills', 80, 0.78, 0.76],
+    ['3 or more', 42, 0.66, 0.6],
+  ]),
+};
+
+const DAY_MS = 86_400_000;
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 const mocks = new WeakSet<object>();
@@ -317,17 +576,42 @@ export function isMockApi(api: object): boolean {
 
 /** The whole bridge, in memory, with sample problems. */
 export function createMockApi(): BridgeApi {
-  const override = promptOverride();
+  const options = mockOptions();
+  const today = localDay();
   let session: MockSession | null = null;
   let preferences: Preferences = { theme: 'auto', text_size: TEXT_SIZE_DEFAULT };
   const states = new Map<string, SectionState>(SECTIONS.map((s, i) => [s.id, i === 0 ? 'learning' : 'off']));
   const profile: ProfileState = { profile: { id: 'sample', name: 'Sample' }, error: null, warnings: [] };
+  const settings = initialSettings(today);
+  let exams: Exam[] = [
+    {
+      exam_id: 1,
+      course_id: CALCULUS,
+      name: 'Midterm',
+      day: addDays(today, 9),
+      scope_decks: [SECTIONS[0]!.id, SECTIONS[1]!.id],
+      target: null,
+      minutes: 50,
+      problems: 10,
+    },
+  ];
+  let nextExamId = 2;
+  let model: ModelView = {
+    version: 'prior',
+    source: 'prior',
+    created_at: Date.now() - 20 * DAY_MS,
+    params: { ...PRIOR_PARAMS },
+    last_refit: null,
+    calibration: CALIBRATION,
+    attempts: 212,
+  };
+  let versions = 0;
 
   function open(): MockSession {
     if (!session) {
-      session = new MockSession();
+      session = new MockSession(sessionFor(options.scenario));
       const first = session.items[0];
-      if (override !== null && first) first.card = { ...first.card, prompt_md: override };
+      if (options.prompt !== null && first) first.card = { ...first.card, prompt_md: options.prompt };
     }
     return session;
   }
@@ -340,24 +624,91 @@ export function createMockApi(): BridgeApi {
     return { s, item };
   }
 
+  function merged<T extends string>(values: T[]): T | 'mixed' {
+    const set = new Set(values);
+    return set.size === 1 ? [...set][0]! : 'mixed';
+  }
+
   function library(): Library {
-    const units = [...new Set(SECTIONS.map((s) => s.unit))].map((unit) => {
-      const sections = SECTIONS.filter((s) => s.unit === unit).map((s) => ({
-        id: s.id,
-        title: s.title,
-        state: states.get(s.id) ?? 'off',
-        skills: 3,
-        textbook_ref: null,
-        // A one-problem skill, as imported or user-made decks often have (ENG-2).
-        small_pool_skills: s.title === 'Shape of a graph' ? ['Concavity'] : [],
-      }));
-      const set = new Set(sections.map((s) => s.state));
-      return { id: unit, title: unit.split('::')[1] ?? unit, state: set.size === 1 ? [...set][0]! : ('mixed' as const), sections };
-    });
-    const set = new Set(units.map((u) => u.state));
     return {
-      courses: [{ id: 'Sample Calculus', title: 'Sample Calculus', state: set.size === 1 ? [...set][0]! : 'mixed', units }],
+      courses: COURSES.map((course) => {
+        const units = [...new Set(SECTIONS.filter((s) => s.course === course).map((s) => s.unit))].map((unit) => {
+          const sections = SECTIONS.filter((s) => s.unit === unit).map((s) => ({
+            id: s.id,
+            title: s.title,
+            state: states.get(s.id) ?? 'off',
+            skills: course === CALCULUS ? 2 : 1,
+            textbook_ref: null,
+            // A one-problem skill, as imported or user-made decks often have (ENG-2).
+            small_pool_skills: s.title === 'Shape of a graph' ? ['Concavity'] : [],
+          }));
+          return { id: unit, title: unit.split('::')[1] ?? unit, state: merged(sections.map((s) => s.state)), sections };
+        });
+        return { id: course, title: course, state: merged(units.map((u) => u.state)) as SectionState | 'mixed', units };
+      }),
     };
+  }
+
+  function courseSettings(courseId: string): CourseSettings {
+    const stored = settings.get(courseId);
+    if (!stored) throw userMessage('There is no course with that name.');
+    const sections = SECTIONS.filter((s) => s.course === courseId);
+    return {
+      ...stored,
+      course_title: courseId,
+      exams: exams.filter((e) => e.course_id === courseId).sort((a, b) => a.day.localeCompare(b.day)),
+      sections: sections.map((s) => ({ deck: s.id, title: s.title, hours: s.hours })),
+      has_pace: sections.every((s) => s.hours !== null),
+    };
+  }
+
+  function daysUntil(day: string): number {
+    return Math.round((Date.parse(`${day}T12:00:00`) - Date.parse(`${today}T12:00:00`)) / DAY_MS);
+  }
+
+  function todayView(): TodayView {
+    const s = session;
+    const plan = s?.items ?? sessionFor(options.scenario).items;
+    const problems = plan.filter((i) => i.kind === 'problem');
+    const minutes = Math.max(1, Math.round(problems.reduce((sum, i) => sum + (i.target_ms ?? 0), 0) / 60_000));
+    const byRole: Partial<Record<Role, number>> = {};
+    for (const item of problems) if (item.role) byRole[item.role] = (byRole[item.role] ?? 0) + 1;
+    const sittingSkills = [...new Set(problems.filter((i) => i.sitting).map((i) => i.skill.name))];
+    const sittingId = problems.find((i) => i.sitting)?.sitting?.id;
+    const hours = {
+      history: { hours_to_keep_pace: 7.8, standard_hours: 6.5 },
+      standard: { hours_to_keep_pace: 6.5, standard_hours: 6.5 },
+      none: { hours_to_keep_pace: null, standard_hours: null },
+    }[options.hours];
+    return {
+      day: today,
+      problems: problems.length,
+      minutes,
+      flashcards: plan.filter((i) => i.kind === 'flashcard').length,
+      courses: [{ course_id: CALCULUS, title: CALCULUS, problems: problems.length, minutes }],
+      exams: exams.map((e) => {
+        const days = daysUntil(e.day);
+        return { exam_id: e.exam_id, name: e.name, course_id: e.course_id, days_left: days, practice_test: days <= 21 };
+      }),
+      session_open: !!s && !s.ended,
+      done_today: !!s && s.ended,
+      extra_practice_available: true,
+      by_role: byRole,
+      ...hours,
+      hours_basis: options.hours,
+      behind: ['Chain rule', 'Concavity'],
+      set_aside: s?.setAside ?? [],
+      sittings: sittingId ? [{ id: sittingId, skills: sittingSkills }] : [],
+      notes: ['Concavity: careless errors are holding it back. Check your work before you submit.'],
+    };
+  }
+
+  function checkExam(exam: ExamIn): void {
+    if (!exam.name.trim()) throw userMessage('Give the exam a name.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(exam.day)) throw userMessage('Choose the day of the exam.');
+    const decks = new Set(SECTIONS.filter((s) => s.course === exam.course_id).map((s) => s.id));
+    if (exam.scope_decks.length === 0) throw userMessage('Choose at least one section the exam covers.');
+    if (exam.scope_decks.some((d) => !decks.has(d))) throw userMessage('That section is not in this course.');
   }
 
   const api: BridgeApi = {
@@ -379,29 +730,13 @@ export function createMockApi(): BridgeApi {
 
     library_get: async () => library(),
     library_set_state: async ({ id, state }) => {
-      for (const s of SECTIONS) if (s.id === id || s.unit === id || id === 'Sample Calculus') states.set(s.id, state);
+      for (const s of SECTIONS) if (s.id === id || s.unit === id || s.course === id) states.set(s.id, state);
       return library();
     },
 
     library_card_media: async () => ({ files: {} }),
 
-    study_today: async () => {
-      const s = session;
-      const open = !!s && !s.ended;
-      return {
-        day: 'today',
-        problems: 6,
-        minutes: 15,
-        flashcards: 1,
-        courses: [{ course_id: 'Sample Calculus', title: 'Sample Calculus', problems: 6, minutes: 15 }],
-        exams: [{ exam_id: 1, name: 'Midterm', course_id: 'Sample Calculus', days_left: 9, practice_test: true }],
-        proposals: [],
-        session_open: open,
-        done_today: !!s && s.ended,
-        vacation: false,
-        extra_practice_available: true,
-      };
-    },
+    study_today: async () => todayView(),
     study_forecast: async () => ({ day: 'tomorrow', problems: 18, minutes: 50, courses: [] }),
     study_start: async () => {
       if (session?.ended) session = null;
@@ -418,6 +753,7 @@ export function createMockApi(): BridgeApi {
       const { s, item } = current(request.item_key);
       if (s.held) throw userMessage('This problem is already answered; continue.');
       s.activeMs = request.timing.active_ms;
+      const single = oneTry(item);
       const verdicts: PartVerdictView[] = item.card.parts.map((part) => {
         const label = part.label ?? 'main';
         const answer = request.answers.find((a) => (a.part ?? 'main') === label) ?? { part: part.label, value: '', source: 'text' as const };
@@ -433,7 +769,7 @@ export function createMockApi(): BridgeApi {
           read_as: read.read_as_latex,
           message: graded.feedback ?? '',
           feedback: graded.feedback,
-          final: graded.correct || s.tries + 1 >= ATTEMPTS,
+          final: graded.correct || single,
           tries_used: s.tries + 1,
         };
       });
@@ -445,12 +781,15 @@ export function createMockApi(): BridgeApi {
           message: "Not counted: fix the answer's form and submit again.",
           solution: null,
           tries_used: s.tries,
-          attempts_allowed: ATTEMPTS,
+          attempts_allowed: single ? 1 : NO_LIMIT,
           rating: null,
           break_due: false,
           find_error: null,
+          can_retry: false,
+          first_try_counted: false,
         };
       }
+      const firstTry = s.tries === 0;
       s.tries += 1;
       if (item.card.kind === 'find-error' && item.card.shown_work.length > 0) {
         // One try: graded on the step, the reason and the corrected value together.
@@ -463,68 +802,44 @@ export function createMockApi(): BridgeApi {
           value_ok: verdicts.every((v) => v.status === 'correct'),
         };
         const ok = fe.step_ok && fe.reason_ok && fe.value_ok;
-        return s.hold(item, ok, verdicts, request.confidence === 'unsure', request.timing.active_ms, fe);
+        if (firstTry) s.first = ok;
+        return s.hold(item, ok, verdicts, request.confidence === 'unsure', request.timing.active_ms, firstTry, fe);
       }
       const correct = verdicts.every((v) => v.status === 'correct');
-      if (!correct && s.tries < ATTEMPTS) {
+      if (firstTry) s.first = correct;
+      if (!correct && !single) {
         s.undoable = false;
         s.lastVerdicts = verdicts;
         return {
           item_key: s.key(),
           outcome: 'retry',
-          verdicts,
+          verdicts: verdicts.map(withoutFeedback),
           message: 'Not quite.',
           solution: null,
           tries_used: s.tries,
-          attempts_allowed: ATTEMPTS,
+          attempts_allowed: NO_LIMIT,
           rating: null,
           break_due: false,
           find_error: null,
+          can_retry: true,
+          first_try_counted: firstTry,
         };
       }
-      return s.hold(item, correct, verdicts, request.confidence === 'unsure', request.timing.active_ms);
+      return s.hold(item, correct, verdicts, request.confidence === 'unsure', request.timing.active_ms, firstTry);
     },
     study_give_up: async (request) => {
       const { s, item } = current(request.item_key);
       if (s.held) throw userMessage('This problem is already answered; continue.');
+      const firstTry = s.tries === 0;
+      if (firstTry) s.first = false; // a give-up before any answer is an aided first try: a miss
       s.tries += 1;
-      return s.hold(item, false, s.lastVerdicts, true, request.timing.active_ms);
-    },
-    study_hint: async (request) => {
-      const { s, item } = current(request.item_key);
-      const text = item.hints[s.hints];
-      if (text === undefined) throw userMessage('No more hints for this problem.');
-      s.hints += 1;
-      const last = s.hints === item.hints.length;
-      return { item_key: s.key(), index: s.hints, total: item.hints.length, text, rating_effect: last ? 'again' : 'hard' };
+      return s.hold(item, false, s.lastVerdicts, true, request.timing.active_ms, firstTry);
     },
     study_tick: async (request) => {
       const { s } = current(request.item_key);
       s.activeMs = Math.max(s.activeMs, request.active_ms);
       if (request.draft !== null) s.draft = request.draft;
       return { saved: true, active_ms: s.activeMs, break_due: false };
-    },
-    study_diagnose: async (request) => {
-      const { s, item } = current(request.item_key);
-      if (!s.held || s.held.correct) throw userMessage('There is no missed answer to diagnose.');
-      const skill = item.steps.find((st) => request.choice === 'step' && st.number === request.step)?.skill_name;
-      const follow_up =
-        request.choice === 'step' && request.step !== 0
-          ? `A quick check on ${skill ?? 'that step'} comes in a few problems.`
-          : request.choice === 'step' || request.choice === 'setup'
-            ? "A worked example comes before this skill's next problem."
-            : request.choice === 'slip' || request.choice === 'misread'
-              ? 'Counted as a slip: the review is recorded as Hard.'
-              : 'A fresh problem on this skill comes later.';
-      const sure = s.held.sure && request.choice !== 'setup' && !(request.choice === 'step' && request.step === 0);
-      return {
-        item_key: s.key(),
-        choice: request.choice,
-        follow_up: sure ? `${follow_up} You submitted it as sure, so it comes back tomorrow for a second look.` : follow_up,
-        rating: 1,
-        slip_accepted: false,
-        checks: [],
-      };
     },
     study_next: async (request) => {
       const { s } = current(request.item_key);
@@ -547,7 +862,7 @@ export function createMockApi(): BridgeApi {
       if (s.held) {
         s.held = null;
         s.tries = 0;
-        s.hints = 0;
+        s.first = null;
         s.lastVerdicts = [];
         s.undoable = false;
         return s.turn('Undone. The problem is back.');
@@ -555,18 +870,22 @@ export function createMockApi(): BridgeApi {
       const last = s.log.at(-1);
       if (!s.undoable || !last) return s.turn('Undo is only available until the next answer is submitted.');
       s.log.pop();
+      if (s.undoPlan) {
+        s.items = s.undoPlan.items;
+        s.setAside = s.undoPlan.setAside;
+        s.note = s.undoPlan.note;
+        s.undoPlan = null;
+      }
       s.index = last.index;
-      s.tries = 0;
-      s.hints = 0;
+      s.reset();
       s.undoable = false;
       return s.turn('Undone. The problem is back.');
     },
-    study_set_lighter: async () => current().s.turn(),
     study_rate_flashcard: async (request) => {
       const { s, item } = current(request.item_key);
       if (item.kind !== 'flashcard') throw userMessage('The item on screen is not a flashcard.');
       const rating = request.rating ?? 3;
-      s.log.push({ index: s.index, item, correct: rating >= 2, rating, active_ms: 0 });
+      s.log.push({ index: s.index, item, correct: rating >= 2, first: null, rating, active_ms: 0 });
       s.undoable = true;
       return {
         item_key: s.key(),
@@ -579,6 +898,8 @@ export function createMockApi(): BridgeApi {
         rating,
         break_due: false,
         find_error: null,
+        can_retry: false,
+        first_try_counted: true,
       };
     },
     study_show_solution: async () => {
@@ -590,6 +911,88 @@ export function createMockApi(): BridgeApi {
       s.ended = true;
       return s.summary();
     },
+
+    course_settings_get: async (courseId) => courseSettings(courseId),
+    course_settings_set: async (next) => {
+      const stored = settings.get(next.course_id);
+      if (!stored) throw userMessage('There is no course with that name.');
+      if (!(next.pace_factor >= 0.75 && next.pace_factor <= 1.5)) throw userMessage('The pace must be between 0.75 and 1.5.');
+      if (!(next.accuracy_target >= 0.8 && next.accuracy_target <= 0.95)) {
+        throw userMessage('The accuracy target must be between 80% and 95%.');
+      }
+      if (![3, 4, 5].includes(next.target_tier)) throw userMessage('The target tier must be 3, 4 or 5.');
+      if (next.growth_band !== 'standard' && next.growth_band !== 'hard') throw userMessage('Choose standard or hard practice.');
+      if (next.start && next.end && next.end < next.start) throw userMessage('The end date is before the start date.');
+      if (next.aligned && !SECTIONS.some((s) => s.course === next.course_id && s.id === next.aligned?.deck)) {
+        throw userMessage('That section is not in this course.');
+      }
+      settings.set(next.course_id, { ...stored, ...next });
+      return courseSettings(next.course_id);
+    },
+    exam_save: async (exam) => {
+      checkExam(exam);
+      const saved: Exam = {
+        exam_id: exam.exam_id ?? nextExamId,
+        course_id: exam.course_id,
+        name: exam.name.trim(),
+        day: exam.day,
+        scope_decks: [...exam.scope_decks],
+        target: exam.target ?? null,
+        minutes: exam.minutes ?? null,
+        problems: exam.problems ?? null,
+      };
+      if (exam.exam_id === undefined) {
+        nextExamId += 1;
+        exams = [...exams, saved];
+      } else {
+        if (!exams.some((e) => e.exam_id === exam.exam_id)) throw userMessage('That exam is no longer there.');
+        exams = exams.map((e) => (e.exam_id === exam.exam_id ? saved : e));
+      }
+      return { ...saved };
+    },
+    exam_delete: async (examId) => {
+      if (!exams.some((e) => e.exam_id === examId)) throw userMessage('That exam is no longer there.');
+      exams = exams.filter((e) => e.exam_id !== examId);
+    },
+
+    skills_get: async (courseId) => {
+      if (!settings.has(courseId)) throw userMessage('There is no course with that name.');
+      return { course_id: courseId, day: today, skills: sampleSkills(courseId, today, session?.setAside ?? []) };
+    },
+
+    model_get: async () => clone(model),
+    model_refit: async () => {
+      versions += 1;
+      const first = model.last_refit === null;
+      const report: RefitReport = {
+        at: Date.now(),
+        attempts: model.attempts,
+        adopted: first,
+        p_value: first ? 0.03 : 0.41,
+        blocks: [
+          { name: 'accuracy', current: 0.512, candidate: first ? 0.497 : 0.511, p_value: first ? 0.03 : 0.41, adopted: first },
+          { name: 'time', current: 0.94, candidate: 0.951, p_value: 0.62, adopted: false },
+        ],
+      };
+      model = {
+        ...model,
+        last_refit: report,
+        ...(first
+          ? {
+              version: `refit-${versions}`,
+              source: 'refit' as const,
+              created_at: report.at,
+              params: { ...model.params, slip: 0.031, calib_a: [0.12, 0.05, 0, -0.08, -0.15], calib_b: 1.08 },
+            }
+          : {}),
+      };
+      return clone(report);
+    },
+    model_reset: async () => {
+      versions += 1;
+      model = { ...model, version: `reset-${versions}`, source: 'reset', created_at: Date.now(), params: { ...PRIOR_PARAMS } };
+      return clone(model);
+    },
   };
   // A flashcard rated with study_rate_flashcard is logged at once; study_next must not log it again.
   const next = api.study_next;
@@ -598,10 +1001,7 @@ export function createMockApi(): BridgeApi {
     if (s?.item?.kind === 'flashcard') {
       current(request.item_key);
       s.index += 1;
-      s.tries = 0;
-      s.hints = 0;
-      s.activeMs = 0;
-      s.draft = null;
+      s.reset();
       return s.turn();
     }
     return next(request);

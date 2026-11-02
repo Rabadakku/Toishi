@@ -2,20 +2,20 @@
   import { onMount, setContext, tick } from 'svelte';
   import Button from '../components/Button.svelte';
   import ChoiceList from '../components/ChoiceList.svelte';
-  import HintLadder from '../components/HintLadder.svelte';
   import Icon from '../components/Icon.svelte';
   import Markdown from '../components/Markdown.svelte';
   import MathAnswer from '../components/MathAnswer.svelte';
   import PauseOverlay from '../components/PauseOverlay.svelte';
   import ProblemView from '../components/ProblemView.svelte';
   import SessionSummary from '../components/SessionSummary.svelte';
+  import SittingBanner from '../components/SittingBanner.svelte';
   import StepSolution from '../components/StepSolution.svelte';
   import StillWorking from '../components/StillWorking.svelte';
   import StudyHeader from '../components/StudyHeader.svelte';
   import VerdictBadge from '../components/VerdictBadge.svelte';
   import VerdictPanel from '../components/VerdictPanel.svelte';
-  import WhatWentWrong from '../components/WhatWentWrong.svelte';
   import { CARD_CONTEXT, type CardContext } from '../lib/card-media';
+  import { ladderWords } from '../lib/plan-words';
   import { getPractice } from '../lib/practice-api';
   import { navigate, router } from '../lib/router.svelte';
   import { actionForKey, isTypingTarget, ownsActivationKeys } from '../lib/shortcuts';
@@ -36,7 +36,6 @@
   let contentEl: HTMLElement | undefined = $state();
   let reviewEl: HTMLElement | undefined = $state();
   let answerRefs: Record<string, MathAnswer | undefined> = $state({});
-  let pickerEl: HTMLElement | undefined = $state();
 
   // Text drawn below this page (prompt, back, solution) shows the open card's images (ADR-0017).
   setContext<CardContext>(CARD_CONTEXT, {
@@ -45,7 +44,7 @@
     },
   });
 
-  const MODES = ['daily', 'lighter', 'focused', 'extra', 'practice-test'] as const;
+  const MODES = ['daily', 'extra', 'practice-test'] as const;
 
   /** #/study resumes today's session or starts it; #/study?mode=extra starts that kind. */
   function startRequest(params: Record<string, string>): StartRequest | null {
@@ -106,35 +105,22 @@
     };
   });
 
-  const PICKER_GAP = 16; // px of air between the picker and the action bar
-
-  /** After a miss: the keyboard goes to the "What went wrong?" picker (the digits pick, Space
-   * does not), and the picker is scrolled clear of the sticky action bar, so its options and
-   * the "Pick one to continue" note are on screen instead of hiding below the fold. */
-  function revealPicker(picker: HTMLElement): void {
-    picker.focus({ preventScroll: true });
-    const bar = contentEl?.querySelector<HTMLElement>('[data-testid="actions"]');
-    const floor = (bar ? bar.getBoundingClientRect().top : window.innerHeight) - PICKER_GAP;
-    const { top, bottom } = picker.getBoundingClientRect();
-    let delta = 0;
-    if (bottom > floor) delta = bottom - floor;
-    else if (top < 0) delta = Math.max(top, bottom - floor);
-    if (delta !== 0) window.scrollBy({ top: delta, behavior: 'auto' });
-  }
-
-  // Keep the keyboard where the student needs it: the answer box while answering, the
-  // review region once the item is finished (so Space and the digits work).
+  // Keep the keyboard where the student needs it: the answer box while answering, Retry
+  // after "Not quite" (so Enter retries and G gives up), the review region once the item is
+  // finished (so Space and the digits work).
   $effect(() => {
     const s = session;
     if (!s) return;
     void s.focusToken;
-    const { phase, paused } = s;
+    const { phase, paused, retryReady } = s;
     if (paused) return;
     // After the DOM update, and after any element that held focus (the pause overlay's
     // Resume button) has gone: a timeout, not just tick().
     void tick().then(() => window.setTimeout(() => {
-      if (s.phase !== phase || s.paused) return;
-      if (phase === 'answering') {
+      if (s.phase !== phase || s.paused || s.retryReady !== retryReady) return;
+      if (phase === 'answering' && retryReady) {
+        contentEl?.querySelector<HTMLElement>('[data-testid="retry"], [data-testid="give-up"]')?.focus();
+      } else if (phase === 'answering') {
         const open = s.openParts.filter((p) => !isChoicePart(p));
         // Find-the-error: the digits pick the step and reason first, so no box has focus yet.
         const waiting = isFindError(s.problem) && !s.findReady;
@@ -142,8 +128,6 @@
         const ref = target ? answerRefs[partId(target)] : undefined;
         if (ref) ref.focus();
         else contentEl?.focus();
-      } else if (phase === 'review' && s.mustDiagnose && pickerEl) {
-        revealPicker(pickerEl);
       } else if (phase === 'review' || phase === 'self-grade' || phase === 'back' || phase === 'front' || phase === 'example') {
         (reviewEl ?? contentEl)?.focus();
       } else if (phase === 'summary' || phase === 'empty') {
@@ -151,13 +135,6 @@
       }
     }, 0));
   });
-
-  /** Clicking Hint takes the keyboard off the answer box; the focus effect gives it back to
-   * the box the student was in. */
-  async function showHint(s: StudySession): Promise<void> {
-    await s.hint();
-    s.focusToken += 1;
-  }
 
   function goHome(): void {
     navigate('home');
@@ -179,6 +156,8 @@
   data-kind={session?.problem?.kind ?? ''}
   data-card-kind={session?.problem?.card.kind ?? ''}
   data-item={session?.problem?.item_key ?? ''}
+  data-role={session?.problem?.role ?? ''}
+  data-retry={session?.retryReady ? 'ready' : session?.isRetry ? 'retrying' : ''}
 >
   {#if session}
     {@const s = session}
@@ -187,8 +166,6 @@
         progress={s.progress}
         reason={s.problem?.reason ?? null}
         itemLabel={itemLabel(s)}
-        lighter={s.lighter}
-        canLighter={!!s.problem && (s.turn?.mode === 'daily' || s.turn?.mode === 'lighter')}
         canEnd={!!s.problem && s.phase !== 'checking'}
         reasonOpen={s.reasonOpen}
         paused={s.paused}
@@ -198,7 +175,6 @@
         onreason={(open) => (s.reasonOpen = open)}
         onpause={() => s.togglePause()}
         onfocusmode={() => (ui.focusMode = !ui.focusMode)}
-        onlighter={(on) => s.setLighter(on)}
         onend={() => s.end()}
       />
 
@@ -229,7 +205,7 @@
             <p>{s.turn?.message || 'Nothing to study right now.'}</p>
             <div class="row">
               <Button variant="primary" data-testid="summary-home" onclick={goHome}>Back to Home</Button>
-              {#if s.turn?.mode === 'daily' || s.turn?.mode === 'lighter'}
+              {#if s.turn?.mode === 'daily'}
                 <Button variant="quiet" data-testid="empty-extra" onclick={() => s.startMore('extra')}>Extra practice</Button>
               {/if}
             </div>
@@ -243,8 +219,24 @@
           {@const reviewing = s.phase === 'review' || s.phase === 'self-grade'}
           {@const flashcard = problem.kind === 'flashcard'}
           {@const findError = isFindError(problem)}
+          {@const ladder = ladderWords(problem.plan_reason)}
           <div class="card" class:wide={reviewing && findError}>
-            <ProblemView prompt={card.prompt_md} calculator={card.calculator} degrees={card.angles === 'degrees'} />
+            {#if s.turnNote}
+              <p class="turn-note" role="status" data-testid="turn-note"><Icon name="info" size={1.125} /> {s.turnNote}</p>
+            {/if}
+            {#if problem.sitting}
+              <SittingBanner sitting={problem.sitting} elapsedMs={() => s.clock.elapsedMs()} />
+            {/if}
+            {#if ladder}
+              <p class="ladder" data-testid="ladder-reason"><Icon name="steps" size={1.125} /> {ladder}</p>
+            {/if}
+            <!-- The textbook line names the section to read; a closed-book sitting leaves it out. -->
+            <ProblemView
+              prompt={card.prompt_md}
+              calculator={card.calculator}
+              degrees={card.angles === 'degrees'}
+              textbook={problem.sitting ? null : (problem.textbook ?? null)}
+            />
 
             {#if problem.kind === 'example'}
               <div class="worked" tabindex="-1" bind:this={reviewEl} data-testid="example">
@@ -333,10 +325,11 @@
                               readonly={s.isSettled(id)}
                               onvalue={(mode, value) => s.setValue(id, mode, value)}
                               onmode={(mode) => s.setMode(id, mode)}
-                              onactive={() => (s.activePartId = id)}
+                              onactive={() => s.enterField(id)}
                             />
                           {/if}
                           {#if verdict}
+                            <!-- A wrong try says "Not quite" and nothing more: no feedback, no count. -->
                             <div class="pverdict" data-testid={`verdict-${id}`} data-kind={verdict.status}>
                               {#if verdict.status === 'correct'}
                                 <VerdictBadge kind="correct" compact />
@@ -349,9 +342,6 @@
                                 <VerdictBadge kind="incorrect" compact word="Out of tries" />
                               {:else if verdict.status === 'incorrect' && s.isRetry}
                                 <VerdictBadge kind="retry" compact />
-                                <span class="vmsg muted tabular"
-                                  >Attempt {verdict.tries_used || s.result?.tries_used || 1} of {s.result?.attempts_allowed ?? 2}</span
-                                >
                               {/if}
                             </div>
                           {/if}
@@ -365,8 +355,6 @@
                   Work it on paper, then show the solution and grade yourself against it.
                 </p>
               {/if}
-
-              <HintLadder hints={s.hints} />
 
               {#if s.stillWorking}
                 <StillWorking onconfirm={() => s.confirmStillWorking()} />
@@ -444,18 +432,6 @@
                           <StepSolution steps={solution.steps} />
                         </section>
                       </div>
-                    {:else if solution.needs_diagnosis && s.phase === 'review'}
-                      <WhatWentWrong
-                        steps={solution.steps}
-                        picked={s.picked}
-                        diagnosis={s.diagnosis}
-                        bind:el={pickerEl}
-                        onpick={(choice, step) => s.diagnose(choice, step)}
-                      />
-                      {#if solution.steps.length === 0 && solution.solution_md}
-                        <h3>Worked solution</h3>
-                        <Markdown source={solution.solution_md} />
-                      {/if}
                     {:else}
                       <h3>Worked solution</h3>
                       {#if solution.steps.length > 0}
@@ -466,9 +442,11 @@
                         <p>Answer: <Markdown source={solution.answer_md} inline /></p>
                       {/if}
                     {/if}
-                    {#if solution.alternative_md && s.picked?.choice === 'other-method'}
-                      <h3>Another method</h3>
-                      <div data-testid="alternative"><Markdown source={solution.alternative_md} /></div>
+                    {#if solution.alternative_md}
+                      <details class="alternative" data-testid="alternative">
+                        <summary>Another method</summary>
+                        <Markdown source={solution.alternative_md} />
+                      </details>
                     {/if}
                   </div>
                 {/if}
@@ -479,13 +457,7 @@
           <footer class="actions" data-testid="actions">
             {#if s.phase === 'review'}
               <div class="group">
-                <Button
-                  variant="primary"
-                  shortcut="Space"
-                  disabled={s.mustDiagnose}
-                  data-testid="continue"
-                  onclick={() => s.next()}>Continue</Button
-                >
+                <Button variant="primary" shortcut="Space" data-testid="continue" onclick={() => s.next()}>Continue</Button>
               </div>
               <div class="group">
                 {#if s.solution?.can_mark_too_easy}
@@ -537,6 +509,22 @@
                   >
                 {/each}
               </div>
+            {:else if s.phase === 'answering' && s.retryReady}
+              <!-- "Not quite": Retry or Give up, and nothing else. -->
+              <div class="group" role="group" aria-label="Not quite">
+                {#if s.canRetry}
+                  <Button variant="primary" shortcut="⏎" title="Try again (Enter)" data-testid="retry" onclick={() => s.retry()}
+                    >Retry</Button
+                  >
+                {/if}
+                <Button
+                  variant={s.canRetry ? 'quiet' : 'primary'}
+                  shortcut="G"
+                  title="Give up and see the solution (G)"
+                  data-testid="give-up"
+                  onclick={() => s.giveUp()}>Give up</Button
+                >
+              </div>
             {:else}
               <div class="group">
                 <Button
@@ -559,17 +547,6 @@
                 {/if}
               </div>
               <div class="group">
-                {#if card.hint_count > 0 && !problem.practice_test}
-                  <Button
-                    variant="quiet"
-                    icon="hint"
-                    shortcut="H"
-                    disabled={s.hints.length >= card.hint_count || s.phase === 'checking'}
-                    title="Show the next hint (H)"
-                    data-testid="hint-button"
-                    onclick={() => showHint(s)}>Hint</Button
-                  >
-                {/if}
                 {#if problem.kind === 'problem'}
                   <Button
                     variant="quiet"
@@ -709,6 +686,40 @@
     color: var(--warning);
     font-size: var(--fs-small);
     font-weight: 500;
+  }
+
+  /* The session's line for this item (a skill set aside, "Undone"): read first, kept until the next item. */
+  .turn-note {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    max-width: var(--measure);
+    margin: 0 auto var(--sp-3);
+    padding-bottom: var(--sp-2);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-small);
+  }
+
+  /* The stuck ladder changed this problem: a few words, no explanation. */
+  .ladder {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    max-width: var(--measure);
+    margin: 0 auto var(--sp-2);
+    color: var(--text-muted);
+    font-size: var(--fs-small);
+    font-weight: 500;
+  }
+
+  .alternative {
+    margin-top: var(--sp-3);
+  }
+
+  .alternative summary {
+    color: var(--accent);
+    font-weight: 600;
+    cursor: pointer;
   }
 
   .review {

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Button from '../components/Button.svelte';
   import { userMessage } from '../lib/bridge';
   import { getPractice } from '../lib/practice-api';
+  import { navigate } from '../lib/router.svelte';
   import type { Library, SectionState } from '../lib/types';
 
   /** The four section states (spec: Library, scope and onboarding). */
@@ -81,6 +83,14 @@
           <h2>{course.title}</h2>
           {@render states(course.id, course.state, course.title)}
         </div>
+        <div class="links">
+          <Button variant="secondary" data-testid="course-setup" onclick={() => navigate('course', { course: course.id })}
+            >Course setup</Button
+          >
+          <Button variant="quiet" data-testid="course-skills" onclick={() => navigate('skills', { course: course.id })}
+            >Skills</Button
+          >
+        </div>
         {#each course.units as unit (unit.id)}
           <div class="unit" data-testid="unit" data-id={unit.id}>
             <div class="row">
@@ -146,6 +156,12 @@
 
   .unit {
     display: grid;
+    gap: var(--sp-1);
+  }
+
+  .links {
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--sp-1);
   }
 
