@@ -248,7 +248,7 @@ read handwritten steps). Plan:
 - Each item is a free-recall definition or formula card plus short problems.
 - The items become background components (`pre.geo.*`) that the Calculus I problems use.
 
-## Learning design proposal (owner, 2026-11-02, 16:01; awaiting the owner's yes)
+## Learning design (owner, 2026-11-02, 16:01–16:12)
 - The owner's view: learn the concept from a textbook, lecture or video; in practice, no tutoring, no help, no explanations; extreme difficulty is fine; long struggle is fine; open book.
 - The proposal sent to the owner:
   - no hints or explanations in the app; each problem names its textbook section;
@@ -262,3 +262,19 @@ read handwritten steps). Plan:
   - productive failure (the gain needs consolidation after the struggle);
   - wheel-spinning in tutoring-system logs (Beck & Gong 2013);
   - desirable difficulties require eventual success (Bjork & Bjork 2011).
+- **The stuck ladder** (owner, 16:12: "the most friction possible before the spinning wheel"). After a miss, each rung adds as little as possible:
+  1. Retry the same problem, unlimited.
+  2. A lower-tier problem on the blamed component.
+  3. A problem on the blamed prerequisite.
+  4. A pointer to the textbook section and example.
+  5. Set the skill aside until tomorrow.
+  6. Only then the worked solution, with a fresh variant later to check that it stuck.
+
+  The ladder spans about 10 tries, the wheel-spinning line in Beck & Gong 2013.
+- **Evidence for friction.** Bastani et al. (PNAS 2025, about 1,000 students): unrestricted ChatGPT raised practice 48% but exams fell 17% against the textbook-only group, and a guardrailed tutor raised practice 127% with exams unchanged.
+- **Teaching content** (owner: allowed, but it must be the best possible and accurate):
+  - A Learn page per section, read before practice and never shown mid-problem.
+  - Written new, from an idea blueprint, drawing on the best open textbooks (CLP Calculus, Active Calculus, OpenStax, APEX) and following explanation research (subgoal-labeled worked examples, concreteness fading).
+  - Lectures: MIT OCW 18.01 (openly licensed); others such as 3Blue1Brown as links only, opened in the browser (the app stays offline).
+  - Verification: CAS checks of every formula and example, two independent reviews per page, an error-report path.
+  - Order: problems, then precalculus geometry, then Learn pages.
