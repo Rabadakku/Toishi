@@ -2,7 +2,8 @@
 
 Constants used below: FSRS-6 default decay w20 = 0.1542, so F = 0.9^(-1/w20) - 1 =
 0.9803465; the probit factor is pi/8 = 0.3926991; gamma = 0.37, rho = 0.10, alpha = 0.3,
-kappa = 0.95 (SharedParams defaults unless a test says otherwise). Values are rounded to 7
+kappa = 0.95, slip 0.05 and phi 1 (GOLDEN, the v1.1 values the arithmetic was worked with;
+the 2026-11-02 audit changed some defaults, not the math). Values are rounded to 7
 decimals in the arithmetic; the assertions allow 1e-6.
 """
 
@@ -32,6 +33,7 @@ CATALOG = {
 MODEL = StudentModel(CATALOG)
 FSRS = FsrsAdapter(fuzz=False)
 TOL = 1e-6
+GOLDEN = SharedParams(slip=0.05, phi=1.0, rho=0.10, alpha=0.3)
 
 
 def test_one_component_prediction():
@@ -45,7 +47,7 @@ def test_one_component_prediction():
         P     = sigma(0 + 1 * logit(0.5831041)) = 0.5831041
     Time: T* = 5 min, nbar = 0, tau_s = 0: median = 5 * exp(ln 2) = 10 min > T*: not at pace.
     """
-    state = MODEL.new_state(SharedParams())
+    state = MODEL.new_state(GOLDEN)
     prediction = MODEL.predict(state, problem("k", tier=2, minutes=5.0), START_MS)
     assert dict(prediction.e)["k"] == pytest.approx(0.6137938, abs=TOL)
     assert dict(prediction.r)["k"] == 1.0
@@ -57,7 +59,8 @@ def test_one_component_prediction():
 
 
 def _three_component_state() -> tuple[SharedParams, StudentState]:
-    params = SharedParams(
+    params = replace(
+        GOLDEN,
         slip=0.08,
         delta4=0.4,
         calib_a=(0.0, 0.0, 0.0, 0.2, 0.0),
@@ -238,7 +241,7 @@ def test_failure_update_end_to_end():
           = -0.0485404 -> clipped to 0, so v stays 0.5 (critique 4)
         g = -0.0259380 / 0.4530833 = -0.0572478; mu' = 3.0 + 0.5 * -0.0572478 = 2.9713761
     """
-    params = SharedParams()
+    params = GOLDEN
     state = state_with(
         params,
         {
@@ -270,7 +273,7 @@ def test_phi_scales_elapsed_time():
     """R_k(t) is FSRS recall after phi * (t - last): with S = 10 and 4 real days, phi = 2
     gives (1 + 0.9803465 * 8 / 10)^(-0.1542) = 1.7842772^(-0.1542) = 0.9145859."""
     state = state_with(
-        replace(SharedParams(), phi=2.0),
+        replace(GOLDEN, phi=2.0),
         {
             "k": ComponentState(
                 mu=0.0,

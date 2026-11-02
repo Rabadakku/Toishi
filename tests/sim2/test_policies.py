@@ -188,7 +188,7 @@ def test_failure_blame_and_matched_error() -> None:
 
 def test_seven_day_memory_match_is_exact_at_the_extremes() -> None:
     model, params = _model()
-    state = model.new_state(params)
+    state = model.new_state(replace(params, phi=1.0))  # the reference FSRS-6 clock
     spec = toy().pools["toy.a1"][1][0]
     model.update(state, _obs(spec, START, True))
     mem = state.components["toy.a1"].memory

@@ -1,7 +1,13 @@
-# Student model and practice planner (design spec v1.1)
+# Student model and practice planner (design spec v1.2)
 
 - Status: **Accepted for implementation**, 2026-11-02. The coordinator designed it (owner instruction: the coordinator makes the design decisions; agents gather sources, review and implement).
 - History: v1 (f96e77e) went through an adversarial review (`student-model-critique.md`, 400a10a): 3 blockers, 11 majors, 7 minors. v1.1 accepts all of them, with the judgment calls noted where a fix was adapted. The disposition of each finding is in section 11.
+- v1.2 (2026-11-02): constants checked against real logs (`model-assumption-audit.md`).
+  - slip prior mean 0.02, ρ 0, φ 0.05 and α 0.05;
+  - milestones at +5, +14 and +28 days, from top-30 course pacing;
+  - refits on evidence rather than every 14 days.
+
+  The conjunctive product is kept for now: it underpredicts multi-skill items in both datasets, whose skill tags overlap. The content rule now requires distinct components, and calibration by component count is checked on our own data (6.4).
 - Supersedes: where they conflict, the skill-level FSRS design in spec ENG-1 to ENG-19 and QUE-1 to QUE-24 (ADR-0020 records this, per DEV-17), and the earlier proposal on branch engine-design (`docs/design/learning-engine.md`), whose simulator stays as background.
 - Research: `docs/research/notes/Student model design/` (six notes), plus the earlier notes they cite.
 - Evidence grades:
@@ -178,16 +184,16 @@ b_k = (1 − q_k) / (1 − P_raw)      exact under independence; b_k ≤ 1 alway
 | β, new course component | mean logit(0.65) = 0.62 + θ̂, variance 2.0 | Koedinger 2023 median first-opportunity accuracy 65.4% (tutoring with hints; datasets above 80% excluded). Widened so experts aren't many SD out (critique 1). **B** |
 | β, background component | mean logit(0.97) = 3.48 + θ̂, variance 1.0 | Prior courses passed; a strong default keeps K background terms from capping problems (critique 6). **C**, checked by matched errors |
 | γ (success gain on ln(1 + C)) | 0.37, fixed | Fitted so the median learner goes from 65% to 80% in about 7 opportunities (Koedinger 2023). It is not used for long-range extrapolation (section 0). **B** in range, **C** beyond it |
-| ρ (failure gain) | 0.10, fixed | **C** |
+| ρ (failure gain) | 0, fixed (v1.1: 0.10) | **B**: failures did not raise later success in Statics or XES3G5M; the app's model scores better at 0 in both (audit #3) |
 | δ_4 | prior N(0.3, 0.3²), refit | **C** |
 | δ_5 | 0.7, fixed | **C** |
-| s | prior Beta(1, 19), mean 0.05, refit | Weak prior so that a careless student's rate is learned (critique 7; ALEKS median careless rate 19%). **C** |
+| s | prior Beta(0.4, 19.6), mean 0.02, refit (v1.1: mean 0.05) | Weak prior (same strength as v1.1) so that a careless student's rate is learned (critique 7). **B**: 0.02 scores better than 0.05 in both datasets (audit #10) |
 | a_ℓ, b | priors N(0, 0.5²), N(1, 0.2²), refit | Platt scaling. **B** |
-| φ | prior: log φ ~ N(0, 0.5²), bounded [0.5, 4], refit | **C**: corrects FSRS's flashcard forgetting speed for procedures |
+| φ | 0.05, fixed in v1 (prior log φ ~ N(ln 0.05, 0.5²), bounded [0.01, 0.5]; v1.1: 1) | **B**: FSRS's flashcard forgetting is about 20× too fast for procedures; φ 0.001–0.05 is calibrated by gap out to 30+ days in XES3G5M and Statics (audit #8) |
 | θ̂ | precision-weighted mean of (μ_k − prior mean) over components with 3 or more attempts, shrunk by n/(n + 20) | Hierarchical shrinkage. **B** |
 | FSRS weights | FSRS-6 defaults (py-fsrs 6.3.2); not refit for components in v1 (critique 3) | **A** for flashcards, **C** for components |
 | τ | prior N(ln 2, 0.5²), refit | **C** |
-| α | 0.3, fixed | **C** |
+| α | 0.05, fixed (v1.1: 0.3) | **B**: practice speed-up after item and student effects is 0.036 (Statics) and 0.030 (EdNet); Delaney's 0.25–0.54 is for repeating identical problems (audit #14) |
 | σ_T | prior 0.45, refit | **C** |
 
 ### 3.6 Refitting
@@ -402,7 +408,11 @@ Report:
 - After launch, test each template family's observed first-try rate against its predicted rate with an exact binomial. Families recur, so one student gives enough data (critique 13).
 
 ### 6.4 Live calibration (owner-facing)
-- Predicted against observed first tries, by tier, by role and by days since last practice (1, 2–7, 8–30, over 30). The days-since split checks the FSRS memory term on procedures.
+- Predicted against observed first tries, by tier, by role, by days since last practice (1, 2–7, 8–30, over 30) and by the number of course components (1, 2, 3+). The days-since split checks the memory term on procedures.
+- **The component-count split checks the conjunctive product.**
+  - In Statics 2011 and XES3G5M, multi-skill items come out about 12 points below observed after recalibration, while single-skill items are calibrated.
+  - In those datasets, P = (1 − s)·Π q_k^(1/K) (the geometric mean) fits best (audit #12). Their tags overlap, though, so the result may not carry over to our distinct components.
+  - If our own data shows the same gap, switch to q′_k = q_k^(K^−c), which keeps per-component blame. The failure step generalizes to u = a·σ^w, u′ = w·u·(1 − σ), u″ = w·u·(1 − σ)·(w(1 − σ) − σ), and a success to g = w(1 − σ), h = w·σ(1 − σ).
 - Time: predicted median against observed.
 - Logged, but not used to tune anything in v1: confusable adjacency, band position, reference-check results (critique 11: one student can't settle them).
 

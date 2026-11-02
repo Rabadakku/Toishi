@@ -6,11 +6,11 @@ history, and returns a first try: correct or not (never aided), the index of the
 
 | Name | Model |
 |---|---|
-| a-model | the design's own model (3.2): conjunctive, execution x FSRS-6 memory |
+| a-model | the design's own model (3.2): conjunctive, execution x FSRS-6 memory (phi ~0.05) |
 | b-additive | Best-LR / DAS3H: ability - difficulty + window terms of each component |
 | c-ppe | conjunctive; each component has PPE strength N^c * T^-(b + m * space) |
 | d-rohrer-taylor | (a) with memory tuned to Rohrer & Taylor 2006 (massed 4w/1w 0.43, ratio 2) |
-| e-slow | (a) learning at half rate (gamma, rho and the speed-up halved) |
+| e-slow | (a) learning at half rate (gamma and the speed-up halved) |
 | e-careless | (a) with slip 0.12 |
 | f-tags | (a); the planner sees 10% of non-main tags dropped, 10% swapped |
 
@@ -276,7 +276,7 @@ class ConjunctiveTruth:
         time: TimeTruth,
         rng: Random,
         gamma: float = 0.37,
-        rho: float = 0.10,
+        rho: float = 0.0,
         delta5: float = 0.7,
         same_day_weight: float = 0.25,
     ) -> None:
@@ -624,20 +624,20 @@ def _draw(profile: str, rng: Random, sim: SimCourse) -> _Draw:
     if profile == "strong":
         beta = {c: STRONG_LOGIT + rng.gauss(0.0, 0.3) for c in (*course, *background)}
         offsets = {c: rng.gauss(0.0, 0.1) for c in course}
-        return _Draw(beta, 0.01, 0.3, 1.0, math.log(0.5), 0.35, offsets, 4.9, strong=True)
+        return _Draw(beta, 0.01, 0.3, 0.03, math.log(0.5), 0.35, offsets, 4.9, strong=True)
     theta = -1.3 if profile == "weak" else rng.gauss(0.0, 0.65)
     beta = {c: LOGIT_065 + theta + rng.gauss(0.0, 0.7) for c in course}
     beta |= {c: LOGIT_097 + 0.5 * theta + rng.gauss(0.0, 0.5) for c in background}
     offsets = {c: rng.gauss(0.0, 0.2) for c in course}
     if profile == "weak":
-        return _Draw(beta, 0.06, 0.4, 1.3, math.log(2.8), 0.5, offsets, theta)
+        return _Draw(beta, 0.06, 0.4, 0.08, math.log(2.8), 0.5, offsets, theta)
     if profile != "typical":
         raise ValueError(f"unknown profile {profile!r}")
     return _Draw(
         beta,
         rng.uniform(0.02, 0.05),
         0.3 + rng.gauss(0.0, 0.15),
-        math.exp(rng.gauss(0.0, 0.3)),
+        0.05 * math.exp(rng.gauss(0.0, 0.5)),  # audit 2026-11-02: procedures forget ~20x slower
         math.log(2.0) + rng.gauss(0.0, 0.2),
         0.45,
         offsets,
@@ -656,7 +656,7 @@ def make_truth(model: str, profile: str, seed: int, sim: SimCourse, start: date)
     draw = _draw(profile, params, sim)
     background = frozenset(c for c, info in sim.catalog.items() if info.background)
     course = [c for c in sim.catalog if c not in background]
-    alpha = 0.15 if model == "e-slow" else 0.3
+    alpha = 0.025 if model == "e-slow" else 0.05  # audit 2026-11-02: measured 0.03-0.04
     time = TimeTruth(draw.tau, draw.sigma, alpha, draw.offsets, background)
     if model == "b-additive":
         return _additive(profile, draw, sim, time, answers)
@@ -695,7 +695,7 @@ def make_truth(model: str, profile: str, seed: int, sim: SimCourse, start: date)
         time=time,
         rng=answers,
         gamma=0.185 if slow else 0.37,
-        rho=0.05 if slow else 0.10,
+        rho=0.0,  # audit 2026-11-02: failures did not raise later success
     )
 
 

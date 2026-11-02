@@ -162,11 +162,12 @@ def test_accuracy_objective_equals_a_full_replay(fast_student):
 
 
 def test_beta_prior_on_logit_slip_peaks_at_its_mean():
-    """Beta(1, 19) as a density of logit s (Jacobian included) has its mode at 0.05."""
-    values = {s: accuracy_log_prior(logit(s), 0.3, 0.0, (0.0,) * 5, 1.0) for s in (0.03, 0.05)}
-    values[0.07] = accuracy_log_prior(logit(0.07), 0.3, 0.0, (0.0,) * 5, 1.0)
-    assert values[0.05] > values[0.03]
-    assert values[0.05] > values[0.07]
+    """Beta(0.4, 19.6) as a density of logit s (Jacobian included) has its mode at 0.02."""
+    values = {
+        s: accuracy_log_prior(logit(s), 0.3, 0.0, (0.0,) * 5, 1.0) for s in (0.01, 0.02, 0.03)
+    }
+    assert values[0.02] > values[0.01]
+    assert values[0.02] > values[0.03]
 
 
 @pytest.fixture(scope="module")

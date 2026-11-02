@@ -11,9 +11,12 @@ EPS = 1e-9  # tolerance for threshold comparisons on floats
 # Pace schedule (4.1).
 PACE_FACTOR_MIN = 0.75
 PACE_FACTOR_MAX = 1.5
-M1_DAYS = 5  # B: median homework due date, 5 days after a topic's first lecture (14 top-30 Calc I courses)
-M2_DAYS = 14  # B: median first exam covering a topic, 16 days after its first lecture, minus EXAM_PULL_DAYS
-M3_DAYS = 28  # C+: the median gap between midterms (28 days), so above-exam level by the next exam
+# B: median homework due date, 5 days after a topic's first lecture (top-30 Calc I syllabi)
+M1_DAYS = 5
+# B: median first exam covering a topic, 16 days after its first lecture, minus EXAM_PULL_DAYS
+M2_DAYS = 14
+# C+: the median gap between midterms (28 days): above-exam level by the next exam
+M3_DAYS = 28
 M1_TIER = 2
 M2_TIER = 3
 EXAM_PULL_DAYS = 2  # an exam pulls M2 (only) to the exam date minus 2 days

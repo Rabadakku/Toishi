@@ -89,17 +89,17 @@ class SharedParams:
     sigma_t. Fixed in v1: gamma, rho, alpha, delta5."""
 
     version: str = "prior"
-    slip: float = 0.05
+    slip: float = 0.02  # audit 2026-11-02: 0.02 fits both datasets better than 0.05
     delta4: float = 0.3
     delta5: float = 0.7
     calib_a: tuple[float, float, float, float, float] = (0.0, 0.0, 0.0, 0.0, 0.0)
     calib_b: float = 1.0
-    phi: float = 1.0
+    phi: float = 0.05  # audit 2026-11-02: flashcard forgetting is ~20x too fast for procedures
     tau: float = 0.6931471805599453  # ln 2
     sigma_t: float = 0.45
     gamma: float = 0.37
-    rho: float = 0.10
-    alpha: float = 0.3
+    rho: float = 0.0  # audit 2026-11-02: failures did not raise later success in either dataset
+    alpha: float = 0.05  # audit 2026-11-02: measured practice speedup 0.03-0.04 (Statics, EdNet)
     q_drift: float = 0.01
     kappa: float = 0.95
     same_day_weight: float = 0.25

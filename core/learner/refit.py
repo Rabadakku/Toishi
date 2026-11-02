@@ -57,11 +57,11 @@ BOOTSTRAP_SEED: Final = 20_261_102
 MAX_EVALUATIONS: Final = 600  # objective evaluations per block
 
 # Section 3.5 priors.
-SLIP_PRIOR: Final = (1.0, 19.0)  # Beta(alpha, beta)
+SLIP_PRIOR: Final = (0.4, 19.6)  # Beta(alpha, beta): mean 0.02, v1.1's strength (audit 2026-11-02)
 DELTA4_PRIOR: Final = (0.3, 0.3)  # normal (mean, sd)
 CALIB_A_PRIOR: Final = (0.0, 0.5)
 CALIB_B_PRIOR: Final = (1.0, 0.2)
-LOG_PHI_PRIOR: Final = (0.0, 0.5)
+LOG_PHI_PRIOR: Final = (-2.995732273553991, 0.5)  # ln 0.05 (audit 2026-11-02)
 TAU_PRIOR: Final = (math.log(2.0), 0.5)
 # 3.5 gives sigma_T only a value (0.45); its spread is ours: log sigma_T ~ N(ln 0.45, 0.5^2).
 LOG_SIGMA_T_PRIOR: Final = (math.log(0.45), 0.5)
@@ -88,14 +88,14 @@ class Coordinate:
 
 # Accuracy coordinates: logit s, delta4, ln phi, a_1..a_5, b. phi's bounds are the design's.
 # s and phi are searched on unconstrained scales, where their priors' modes are the stated
-# centres (Beta(1, 19) on logit s peaks at its mean 0.05; on s itself it peaks at 0).
+# centres (Beta(0.4, 19.6) on logit s peaks at its mean 0.02; on s itself it peaks at 0).
 ACCURACY_COORDINATES: Final = (
     Coordinate("logit_slip", math.log(0.001 / 0.999), 0.0, 0.25, 0.005),
     # delta4 and phi are held at their current values in v1 (step 0 skips them): the 6.1
     # recovery test at 1,000 attempts did not recover phi (it stayed at its prior), and the
     # tier-4 recalibration a_4 absorbed delta4. Design 6.1 says to fix such parameters.
     Coordinate("delta4", -1.5, 2.1, 0.0, 0.005),
-    Coordinate("log_phi", math.log(0.5), math.log(4.0), 0.0, 0.005),
+    Coordinate("log_phi", math.log(0.01), math.log(0.5), 0.0, 0.005),
     *(Coordinate(f"calib_a{tier}", -2.0, 2.0, 0.25, 0.005) for tier in range(1, 6)),
     Coordinate("calib_b", 0.2, 2.0, 0.1, 0.0025),
 )
@@ -374,8 +374,8 @@ def accuracy_log_prior(
     logit_slip: float, delta4: float, log_phi: float, calib_a: Sequence[float], calib_b: float
 ) -> float:
     """Log density (up to a constant) of the 3.5 priors of the accuracy block, on the search
-    scales: Beta(1, 19) for s as a density of logit s (Jacobian s (1 - s) included, so its
-    mode is the prior mean 0.05), normal for delta4, ln phi, a_l and b."""
+    scales: Beta(0.4, 19.6) for s as a density of logit s (Jacobian s (1 - s) included, so its
+    mode is the prior mean 0.02), normal for delta4, ln phi, a_l and b."""
     alpha, beta = SLIP_PRIOR
     slip = sigmoid(logit_slip)
     value = alpha * math.log(slip) + beta * math.log1p(-slip)

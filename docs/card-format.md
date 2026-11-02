@@ -150,6 +150,9 @@ A solution written as a numbered list, with each item starting with a skill ID i
 
 - Step 0 is "Set up and choose the method". Tag it with the card's skill, or with a method-choice skill when choosing the method is the hard part.
 - Every step names exactly one skill: the one that step uses. The card's skill and uses tags must agree with the step tags (see Components).
+- **Components must be distinct requirements.**
+  - Never tag the same demand twice. A parent and its child skill, or two names for one move, overlap.
+  - The student model multiplies a problem's components, and overlapping tags make problems look much harder than they are. Public learning logs with overlapping tags show a 12-point gap (docs/design/model-assumption-audit.md, #12).
 - Labels are a few words (Differentiate, Factor, Solve). Math and Markdown work after the colon, and a step can run over several lines.
 - A solution that isn't a numbered, tagged list still imports, but the app can only offer the card's uses skills after a miss. Content packs require step tags.
 - **Checked steps (format 1.1, MATH-17).** A step may carry indented `check:` lines, each an equality in answer syntax that may use the template functions (`diff`, `integrate`, `limit`, `solve`, `subs`, `simplify`, `expand`, `factor`) and, in a template, its names. They are not shown to the student. The pack build checks every claim with the computer algebra system and an independent mpmath recomputation, and grades the final line against the key: the last side of the last step's last claim, or, without one, the last math of the last step after its last `=`. Steps with math that no claim covers, and final lines that can't be matched, are listed as unverified in the build report.
