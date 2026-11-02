@@ -207,32 +207,32 @@ def test_mid_course_start_keeps_earlier_skills_until_a_check_says_otherwise() ->
 
 
 def test_exam_pulls_m2_and_adds_its_day_as_a_maintenance_horizon() -> None:
-    """Exam on day 25 covering unit U1 (sections A and B). b1 (intro day 7): M2 is pulled
-    from day 28 to day 23; a1 (intro day 0) keeps M2 on day 21 (already earlier); c1 (U2)
-    is untouched (M2 on day 35). On day 17, a1 is certified with a 10-day stability, last
-    practised on day 16: tomorrow R = 0.9^(2/10) = 0.979 (readiness 0.95, fine), but on the
-    exam day R = 0.9^(9/10) = 0.909 (readiness 0.882 < 0.9): a maintenance problem, reason
+    """Exam on day 20 covering unit U1 (sections A and B). b1 (intro day 7): M2 is pulled
+    from day 21 to day 18; a1 (intro day 0) keeps M2 on day 14 (already earlier); c1 (U2)
+    is untouched (M2 on day 28). On day 17, a1 is certified with a 4-day stability, last
+    practised on day 16: tomorrow R = 0.9^(2/4) = 0.949 (readiness 0.920, fine), but on the
+    exam day R = 0.9^(4/4) = 0.9 (readiness 0.873 < 0.9): a maintenance problem, reason
     "exam". On day 24, b1 has M1 but not M2: behind, its growth counts as missed."""
-    exam = ExamSpec(1, day(25), ("K::U1",))
+    exam = ExamSpec(1, day(20), ("K::U1",))
     s = CourseSettings("c", start=D0, exams=(exam,))
     log = Log()
     blocks_done(log, "a1", "a2", "a3", "b1", "b2", "c1")
     certify_all(log, "a1", 1)
     state = FakeState(
-        default_e=0.97, stability={"a1": 10.0}, last_ms={"a1": at(day(17), 600) - DAY_MS}
+        default_e=0.97, stability={"a1": 4.0}, last_ms={"a1": at(day(17), 600) - DAY_MS}
     )
     p = plan(log, day(17), state, s)
     ms = {st.skill_id: st.milestones for st in p.statuses}
-    assert [m.deadline for m in ms["b1"]] == [day(14), day(23), day(42)]
-    assert [m.deadline for m in ms["a1"]] == [day(7), day(21), day(35)]
-    assert [m.deadline for m in ms["c1"]] == [day(21), day(35), day(49)]
+    assert [m.deadline for m in ms["b1"]] == [day(12), day(18), day(35)]
+    assert [m.deadline for m in ms["a1"]] == [day(5), day(14), day(28)]
+    assert [m.deadline for m in ms["c1"]] == [day(19), day(28), day(42)]
     a1 = [i for i in p.items if i.skill_id == "a1" and i.role == "maintenance"]
     assert [i.reason for i in a1] == ["exam"]
-    assert a1[0].p == pytest.approx(0.97 * 0.9 ** (1 / 10))
+    assert a1[0].p == pytest.approx(0.97 * 0.9 ** (1 / 4))
     log.many(SK["b1"].pool[3], day(15), "111")  # M1 at tier 2
     p = plan(log, day(24), FakeState(default_e=0.97), s)
     st = status_of(p, "b1")
-    assert (st.current, st.track) == (Milestone("M2", 3, day(23)), "behind")
+    assert (st.current, st.track) == (Milestone("M2", 3, day(18)), "behind")
     b1 = [i for i in p.items if i.skill_id == "b1" and i.role == "growth"]
     assert b1
     assert all(i.missed and i.priority == 2 for i in b1)

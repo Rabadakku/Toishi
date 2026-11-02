@@ -50,11 +50,11 @@ def test_not_introduced_until_the_section_date() -> None:
 
 
 def test_new_until_the_block_is_done() -> None:
-    """Day 0: a1 is new, its milestone M1 (tier 2) due day 7; the example is its card. a2
+    """Day 0: a1 is new, its milestone M1 (tier 2) due day 5; the example is its card. a2
     has no example card: a tier-1 problem shown solved stands in."""
     ctx = context(Log(), D0)
     v = ctx.view("a1")
-    assert (v.state, v.current, v.track) == ("new", Milestone("M1", 2, day(7)), "on-track")
+    assert (v.state, v.current, v.track) == ("new", Milestone("M1", 2, day(5)), "on-track")
     assert (v.block.example_card, v.block.problems, v.block.done) == ("ex.a1", 0, False)
     assert ctx.view("a2").block.example_card == "a2.t1.01"
 

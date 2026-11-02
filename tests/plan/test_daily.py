@@ -243,18 +243,17 @@ def test_every_tenth_item_is_a_reference_check() -> None:
 
 
 def test_missed_milestone_work_is_held_to_40_percent_then_overflows() -> None:
-    """Day 14: a1-a3 are behind M1 (due day 7); b1, b2 are due today, so on track; c1 is new
-    today. The day's other work is c1's block (4) plus b1, b2 growth (6) = 10 items, and the
-    10th position brings a reference check: missed work k obeys k <= 0.4 (10 + 1 + k), so
-    k = 7 (7 <= 7.2; 8 > 7.6), earliest deadline first; the other 2 come after everything
-    else."""
+    """Day 14: a1-a3 are behind M1 (due day 5) and b1, b2 behind theirs (due day 12); c1 is
+    new today. The day's other work is c1's block (4 items): missed work k obeys
+    k <= 0.4 (4 + k), so k = 2 (2 <= 2.4; 3 > 2.8), earliest deadline first; the other 13
+    come after everything else (a reference check lands in them at the 10th position)."""
     log = Log()
     blocks_done(log, "a1", "a2", "a3", "b1", "b2")
     p = plan(log, day(14))
     missed = [i for i in p.items if i.missed]
-    assert len(missed) == 9
-    assert {i.skill_id for i in missed} == {"a1", "a2", "a3"}
-    assert p.overflow == 2
+    assert len(missed) == 15
+    assert {i.skill_id for i in missed} == {"a1", "a2", "a3", "b1", "b2"}
+    assert p.overflow == 13
     assert main_share([], p.items) <= 0.4 + 1e-9
     assert [i.role for i in p.items[:4]] == ["new"] * 4
     last = max(k for k, i in enumerate(p.items) if not i.missed and i.role != "check")
@@ -262,7 +261,7 @@ def test_missed_milestone_work_is_held_to_40_percent_then_overflows() -> None:
     assert all(i.missed or i.role == "check" for i in after)
     assert sum(i.missed for i in after) >= p.overflow
     assert any("40%" in n for n in p.notes)
-    assert set(p.behind) == {"a1", "a2", "a3"}
+    assert set(p.behind) == {"a1", "a2", "a3", "b1", "b2"}
 
 
 def test_with_nothing_but_catch_up_the_whole_backlog_is_planned() -> None:
@@ -379,9 +378,9 @@ def test_hours_from_history_per_certified_milestone() -> None:
     """a1-a3 certify M1 (day 1), M2 (day 2), M3 (day 3) and b1 M1 (day 8): 10 milestones. Each
     attempt took 2 minutes (as recorded): a1-a3's M1 windows hold the block success and 3
     tier-2 tries (8 min), M2 and M3 four tries each (8 min); b1's M1, 8 min. Day 16: the
-    next 7 days (17-23) hold a1-a3's M2 deadlines (day 21, tier 3; the schedule counts them
-    whether or not they're certified) and c1's M1 (day 21, tier 2): 4 x 8 = 32 min. No
-    maintenance is due (no forgetting): 32/60 h."""
+    next 7 days (17-23) hold b1's and b2's M2 deadlines (day 21, tier 3; the schedule counts
+    them whether or not they're certified) and c1's M1 (day 19, tier 2): 3 x 8 = 24 min. No
+    maintenance is due (no forgetting): 24/60 h."""
     log = Log()
     for s in ("a1", "a2", "a3"):
         log.add(SK[s].pool[0], D0, True, role="new")
@@ -393,7 +392,7 @@ def test_hours_from_history_per_certified_milestone() -> None:
     spent = {o.attempt_id: 2.0 for o in log.items}
     p = plan(log, day(16), state=FakeState(default_e=0.97), spent=spent)
     assert p.hours_basis == "history"
-    assert p.hours_to_keep_pace == pytest.approx(32 / 60)
+    assert p.hours_to_keep_pace == pytest.approx(24 / 60)
 
 
 def test_hours_borrow_the_nearest_tier_and_attempt_minutes_fall_back() -> None:
@@ -462,10 +461,10 @@ def test_the_next_study_day_sets_the_maintenance_horizon() -> None:
 
 
 def test_hours_add_the_maintenance_the_week_makes_due() -> None:
-    """The history of the previous test (32 minutes of milestones next week), with a1
+    """The history of the previous test (24 minutes of milestones next week), with a1
     forgetting fast (stability 1 day, practised just now): its tier-4 readiness falls to
     0.97 x 0.9 = 0.873 < 0.9 within the week, adding one tier-4 problem (median 5.0 min):
-    37/60 h."""
+    29/60 h."""
     log = Log()
     for s in ("a1", "a2", "a3"):
         log.add(SK[s].pool[0], D0, True, role="new")
@@ -478,4 +477,4 @@ def test_hours_add_the_maintenance_the_week_makes_due() -> None:
     state = FakeState(default_e=0.97, stability={"a1": 1.0}, last_ms={"a1": at(day(16), 600)})
     p = plan(log, day(16), state=state, spent=spent)
     assert p.hours_basis == "history"
-    assert p.hours_to_keep_pace == pytest.approx(37 / 60)
+    assert p.hours_to_keep_pace == pytest.approx(29 / 60)

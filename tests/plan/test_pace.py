@@ -120,28 +120,28 @@ def test_unscheduled_section_blocks_its_dependents_and_cycles_settle() -> None:
 INTRO = date(2026, 9, 22)
 
 
-def test_milestones_at_plus_7_21_35() -> None:
-    """Introduced Sep 22: M1 at tier 2 by Sep 29, M2 at tier 3 by Oct 13, M3 at tier 4 by
-    Oct 27. No end date: no Keep."""
+def test_milestones_at_plus_5_14_28() -> None:
+    """Introduced Sep 22: M1 at tier 2 by Sep 27, M2 at tier 3 by Oct 6, M3 at tier 4 by
+    Oct 20. No end date: no Keep."""
     got = milestones(skill("b1", B, 2), INTRO, CourseSettings("c", start=START))
     assert got == (
-        Milestone("M1", 2, date(2026, 9, 29)),
-        Milestone("M2", 3, date(2026, 10, 13)),
-        Milestone("M3", 4, date(2026, 10, 27)),
+        Milestone("M1", 2, date(2026, 9, 27)),
+        Milestone("M2", 3, date(2026, 10, 6)),
+        Milestone("M3", 4, date(2026, 10, 20)),
     )
 
 
 def test_exam_pulls_m2_only() -> None:
-    """Exam Oct 8 covering unit U1 (B's parent deck): M2 = min(Oct 13, Oct 8 - 2) = Oct 6.
-    M1 (Sep 29) is already earlier; M3 stays Oct 27."""
-    exam = ExamSpec(1, date(2026, 10, 8), ("Calc::U1",))
+    """Exam Oct 5 covering unit U1 (B's parent deck): M2 = min(Oct 6, Oct 5 - 2) = Oct 3.
+    M1 (Sep 27) is already earlier; M3 stays Oct 20."""
+    exam = ExamSpec(1, date(2026, 10, 5), ("Calc::U1",))
     got = milestones(skill("b1", B, 2), INTRO, CourseSettings("c", start=START, exams=(exam,)))
-    assert [m.deadline for m in got] == [date(2026, 9, 29), date(2026, 10, 6), date(2026, 10, 27)]
+    assert [m.deadline for m in got] == [date(2026, 9, 27), date(2026, 10, 3), date(2026, 10, 20)]
 
 
 def test_exam_right_after_intro_pulls_m2_to_intro_and_m1_with_it() -> None:
     """Exam Sep 25, three days after the Sep 22 intro: M2 = max(Sep 22, Sep 23) = Sep 23, and
-    M1 = min(Sep 29, Sep 23) = Sep 23. An exam on Sep 23: M2 = max(Sep 22, Sep 21) = Sep 22."""
+    M1 = min(Sep 27, Sep 23) = Sep 23. An exam on Sep 23: M2 = max(Sep 22, Sep 21) = Sep 22."""
     exam = ExamSpec(1, date(2026, 9, 25), (B,))
     got = milestones(skill("b1", B, 2), INTRO, CourseSettings("c", exams=(exam,)))
     assert got[0].deadline == got[1].deadline == date(2026, 9, 23)
@@ -154,7 +154,7 @@ def test_exams_before_intro_or_out_of_scope_do_not_pull() -> None:
     early = ExamSpec(1, date(2026, 9, 20), (B,))
     other = ExamSpec(2, date(2026, 10, 1), ("Calc::U2",))
     got = milestones(skill("b1", B, 2), INTRO, CourseSettings("c", exams=(early, other)))
-    assert got[1].deadline == date(2026, 10, 13)
+    assert got[1].deadline == date(2026, 10, 6)
     assert in_scope("Calc::U1::B", ExamSpec(3, INTRO, ("Calc::U1",)))
     assert not in_scope("Calc::U10::B", ExamSpec(3, INTRO, ("Calc::U1",)))
 
@@ -200,7 +200,7 @@ def test_mid_course_start_assumes_earlier_sections_learned() -> None:
     assert assumed_learned(cr, s) == {"a1"}
     sch = schedule(cr, s)
     assert sch.milestones["a1"] == (Milestone("keep", 3, None),)
-    assert sch.milestones["b1"][0] == Milestone("M1", 2, date(2026, 10, 12))
+    assert sch.milestones["b1"][0] == Milestone("M1", 2, date(2026, 10, 10))
     assert assumed_learned(cr, CourseSettings("c", start=START)) == frozenset()
 
 

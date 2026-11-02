@@ -258,9 +258,9 @@ The state is a deterministic function of the attempt log, the pack content at ea
 
 | Milestone | Requirement | Deadline | Grade |
 |---|---|---|---|
-| M1 | certified at tier 2 | introduction + 7 days | **B**: MIT 18.01 weekly problem sets |
-| M2 | certified at tier 3 at pace | introduction + 21 days | **B**: 18.01 exams about every 3 weeks |
-| M3 | certified at the target tier at pace | introduction + 35 days | **C** |
+| M1 | certified at tier 2 | introduction + 5 days | **B**: the median homework due date, 5 days after a topic's first lecture (40 topics in 3 top-30 Calc I courses; range 2–14) |
+| M2 | certified at tier 3 at pace | introduction + 14 days | **B**: the median first exam covering a topic, 16 days after its first lecture (n = 19, range 6–33), minus the 2-day exam lead |
+| M3 | certified at the target tier at pace | introduction + 28 days | **C**: the median gap between midterms (28 days), so above-exam level by the next exam |
 
 - An exam pulls M2 (not M3) for in-scope skills to the exam date minus 2 days (critique 18).
 - After the course end date, a skill drops to Keep: accuracy target 0.80 at tier 3 (LIB-8 kept).
@@ -416,7 +416,7 @@ The student can enter exam scores, and the app compares them with readiness for 
 | Accuracy target | 0.90, owner-settable | Owner |
 | Target tier | 4 | Owner |
 | Minutes per step, Calc I | 1.5 (+0.5 to read) | C |
-| Milestones | +7 / +21 / +35 days; exams pull M2 to exam − 2 | B, B, C |
+| Milestones | +5 / +14 / +28 days (changed 2026-11-02 from +7 / +21 / +35, from syllabus data); exams pull M2 to exam − 2 | B, B, C |
 | Keep after the course | 0.80 at tier 3 | Existing LIB-8 |
 | Certification | κ0 = 4; n_eff ≥ 3 (M1) / 4 (M2, M3); half-life 30 days; revoke at target − 0.10 | B (thresholds), C (values) |
 | Growth allowance | 3 per skill per day; stop after 2 consecutive successes | C (direction A) |
