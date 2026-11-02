@@ -12,7 +12,7 @@ Terms reminder for all downloaded sets: none of them may be redistributed or com
 |---|---|---|---|---|---|---|---|---|---|---|
 | ASSISTments 2009-10 skill builder (`assist0910_sb`) | downloaded | problem log, 346,860 (corrected file) | 4,217 | `ms_first_response`, `overlap_time` (ms) | 18.3 s / 23.2 s | 0.09% / 0% and 0.05% / 0% | `order_id` only (no timestamps) | `skill_id` on 81.6% of rows | scaffold sub-problems (`original=0`), 20.6% of rows | ASSISTments site terms |
 | ASSISTments 2012-13 (`assist1213`) | downloaded | problem log, 6,123,270 | 46,674 | `ms_first_response` (ms); `end_time - start_time`; per-action ms offsets in `actions` | 22.3 s; 26.9 s | 0% / 0%; 727 negative | `start_time` | `skill_id` on 44.3% of rows | scaffolds 5.0% of rows; every attempt/hint timed in `actions` | ASSISTments site terms |
-| ASSISTments 2019-20 school year (`assist1920`) | downloaded | {{1920_SUMMARY_ROWS}} | {{1920_SUMMARY_STUDENTS}} | `time_on_task` (s); action timestamps in `slogs` | {{1920_SUMMARY_MEDIAN}} | {{1920_SUMMARY_ZERO}} | `start_time`; action `timestamp` | Common Core codes (`pdets.skills`) on {{1920_SUMMARY_SKILLROWS}} of rows | action log per problem (attempts, help); no scaffold rows | ASSISTments Data Terms of Use (2020) |
+| ASSISTments 2019-20 school year (`assist1920`) | downloaded | problem log, 20,752,836; actions, 95,866,415 | 277,512 | `time_on_task` (s); action timestamps in `slogs` | 36.3 s | 0% / 1.86% | `start_time` (parse as UTC); action `timestamp` | Common Core codes (`pdets.skills`) on 33.4% of rows | action log per problem (attempts, help); no scaffold rows | ASSISTments Data Terms of Use (2020) |
 | ASSISTments online experiments 2019-21 (`assist_exp2021`) | downloaded | problem log, 771,386; actions, 3,708,299 | 45,372 | `time_on_task`, `first_response_or_request_time` (s) | 40.3 s; 31.6 s | 0% / 3.0%; 0% / 4.2% | `start_time`; action `timestamp` | none | scaffold rows 6.8%; `problem_part` 1-4 | ASSISTments Data Terms of Use (2020) |
 | Junyi Academy 2018-19 (`junyi2019`) | downloaded | attempt, 16,217,311 | 72,758 | `total_sec_taken` (s, capped at 1,800) | 21 s | 0.22% / 0% | `timestamp_TW` (15-min buckets), then `problem_number` | exercise `ucid` + 4-level hierarchy | none (single problems) | CC BY-NC-SA 4.0 |
 | EdNet-KT2 (`ednet_kt2`) — TOEIC, not math | downloaded | action, 56,360,602 | 297,444 | derived: bundle enter→submit, enter→each respond (ms) | 24.6 s; 20.9 s (5,000-user sample) | 0% / 0% (sample) | `timestamp` (ms, shifted) | `tags`, `part` via `ednet/questions.csv` | bundles of 1-5 questions | CC BY-NC 4.0 |
@@ -104,7 +104,63 @@ df["correct_first"] = (df["correct"] == 1).astype(int)                # 'correct
 
 ## 3. ASSISTments 2019-2020 school year (`assist1920`) — downloaded
 
-{{1920_SECTION}}
+- **Source.** OSF "ASSISTments 2019-2020 School Year Dataset", <https://osf.io/q7zc5/>, DOI 10.17605/OSF.IO/Q7ZC5. Downloaded `2019-2020_school_year.zip` (<https://osf.io/download/7sftn/>), `ASSISTments Dataset Description.pdf` (saved as `ASSISTments_Dataset_Description.pdf`) and `license.txt`. The project also offers `pre_shutdown.zip` and `post_shutdown.zip`, which split the same year at the 2020-03-13 school closures; they were not downloaded. Per the wiki, the data was used for Prihar et al. (2021), "Student Engagement During Remote Learning", LAK21 companion proceedings.
+- **License / terms.** `license.txt` holds the ASSISTments Data Terms of Use (Effective October 30, 2020), byte-identical to section 4's copy, where the points are listed. OSF lists the license as "Other". Cite ASSISTments and the dataset DOI. The data may not be redistributed.
+- **Files (local).** Zip of 1,265,698,754 bytes (sha256 `844555110c1e…a82f89`). It holds 10 CSVs, 9,963,633,307 bytes uncompressed: `plogs.csv` 1.96 GB, `slogs.csv` 7.64 GB, `alogs.csv` 190 MB, `tlogs.csv` 115 MB, and the detail tables `adets`, `sdets`, `pdets`, `cdets`, `tdets`, `ddets`. Kept zipped; read members with `zipfile`. A full read of `slogs` takes roughly 25 minutes here.
+- **Size.**
+  - `plogs` (one row per student × problem, scaffolds excluded): 20,752,836 rows; 277,512 students; 134,655 problems; 197,022 assignments; 2,505,225 assignment logs (`log_id` = one student doing one assignment). 508 rows repeat a (`log_id`, `problem_id`) pair.
+  - `slogs` (one row per action): 95,866,415 rows.
+  - `pdets`: 134,655 rows, with 391 repeated `problem_id` rows despite the documentation. De-duplicate before joining.
+  - `adets`: 197,022 assignments, of which 184,313 are problem sets and 12,709 skill builders. 938,503 `plogs` rows come from skill builders and 19.8M from problem sets.
+  - Dates: problem start times run 2019-09-02 to 2020-10-29. Only assignments started before July 2020 are included, but their later problems are kept.
+- **Steps.** `plogs` holds main problems only; tutoring is recorded as actions. `slogs` action counts:
+
+  | Action | Count |
+  |---|---|
+  | `problem_started` | 20,761,746 |
+  | `problem_finished` | 20,406,502 |
+  | `continue_selected` | 18,192,586 |
+  | `correct_response` | 15,291,169 |
+  | `wrong_response` | 7,163,805 |
+  | `open_response` | 5,045,591 |
+  | `answer_requested` | 2,546,833 |
+  | `assignment_started` | 2,497,719 |
+  | `assignment_finished` | 2,129,728 |
+  | `assignment_resumed` | 1,446,211 |
+  | `tutoring_requested` | 384,525 |
+
+  `work_submitted` is documented but never occurs. Hints, scaffolds and explanations are not distinguished: all are `tutoring_requested`. The per-problem action sequence therefore times every attempt and help request, but there are no scaffold sub-problem rows.
+- **Time columns.**
+  - `plogs.time_on_task`: "An estimate of the number of seconds the student spent solving the problem based on an aggregation of student_log information."
+    - Median 36.3 s (19.6 s when the first answer was correct, 64.0 s when not); p10 6.1, p25 13.3, p75 105.4, p90 280.8, p99 1,622.7 s; max 23,377 s (6.5 h).
+    - Missing 1.86% (mostly unfinished problems: 83.2% of not-completed rows lack it); zero 0; negative 0. 1.64% are under 1 s, 4.05% over 10 min and 0.02% over 1 h.
+  - Check against `slogs`: in the first 3,000,000 `slogs` rows, 621,698 problem instances matched `plogs`. For them, `time_on_task` was within 1 s of `problem_started → problem_finished` for 96.97%, shorter for 3.02%, and never longer. In the same sample, started-to-finished had a median of 48.2 s but a p99 of 100,863 s. So `time_on_task` removes the long away gaps seen in the raw action timestamps; I did not check exactly how it is computed.
+  - Time to first action: from `slogs`, `problem_started →` the first `correct_response`, `wrong_response`, `open_response`, `tutoring_requested` or `answer_requested`. Median 39.2 s and p90 289.5 s in the sample, with no negatives. It exceeds `time_on_task` by more than 1 s for 2.5% of problems.
+  - `alogs.time_on_task` sums the problem times per assignment. `sdets` and `adets` carry per-student and per-assignment mean time on task.
+- **Timestamps.** `start_time` (plogs) and `timestamp` (slogs) are strings with microseconds and an explicit UTC offset, and **the offset varies by row**: `+00:00` on 14.75M plogs rows, `-04:00` on 2.74M, `-05:00` on 3.26M. Always parse with `utc=True`; naive parsing would mix UTC with local time.
+- **Ordering.** Sort `plogs` by (`student_id`, `start_time`). The file is nearly in order: 165,846 of 20,475,324 consecutive same-student pairs go backwards, with no exact ties. Sort `slogs` by `timestamp` within `log_id`.
+- **First attempt and correctness.**
+  - `correct` is True or False for whether "the student's first answer to the problem was correct". It is **missing for 25.8% of rows**: incomplete problems without a teacher grade, and ungraded open responses. Counts: 10,555,682 True, 4,832,846 False, 5,364,308 missing.
+  - Also `attempt_count` (median 1, mean 1.33, max 724), `answer_before_tutoring`, `fraction_of_hints_used`, `answer_given` (12.2% True) and `problem_completed` (1.7% False).
+- **Skill / KC columns.** `pdets.skills` is a list of Common Core standard codes (363 distinct). Only 34.5% of problems are tagged, covering 33.4% of `plogs` rows, and 4.0% of problems carry more than one code. `pdets` also has `problem_type` (algebraic expression, number, ungraded open response, multiple choice, …), `content_source` (e.g. Illustrative Mathematics, Engage NY, Eureka, Open Up, ASSISTments skill builders) and `tutoring_types`.
+- **Practice depth.** Problem logs per student: median 29, p90 194, max 3,288. Rows per student-skill (first listed code): median 4, p90 16; 42.3% of 975,207 pairs have 5 or more. The same problem is seen again in 267,424 of 20,446,759 student-problem pairs.
+- **Other tables.** `alogs` (assignment start, completion, mean correctness), `sdets` (per-student prior counts and means), `tlogs` (teacher report views and grading actions), and `cdets`, `tdets`, `ddets` (class, teacher, district: US state, opportunity-zone status).
+- **Loading snippet.** The 10 columns below take about 100 MB per million rows, roughly 2 GB in all. Merging the skill lists into every row would take about 5 GB, so map them per analysis instead.
+
+```python
+import ast, zipfile
+import pandas as pd
+zf = zipfile.ZipFile("/home/claude/data/assist1920/2019-2020_school_year.zip")
+cols = ["log_id", "student_id", "assignment_id", "problem_id", "start_time", "time_on_task", "attempt_count", "correct", "answer_given", "problem_completed"]
+parts = []
+for ch in pd.read_csv(zf.open("plogs.csv"), usecols=cols, chunksize=2_000_000):   # 20.8M rows in total
+    ch["start_time"] = pd.to_datetime(ch["start_time"], utc=True, format="mixed")  # offsets differ by row: parse as UTC
+    ch["correct"] = ch["correct"].map({True: 1.0, False: 0.0})                     # NaN = not graded (25.8% of rows)
+    parts.append(ch)
+plogs = pd.concat(parts, ignore_index=True).sort_values(["student_id", "start_time"])  # time_on_task: seconds
+pdets = pd.read_csv(zf.open("pdets.csv"), usecols=["problem_id", "skills", "problem_type"]).drop_duplicates("problem_id")
+pdets["skills"] = pdets["skills"].fillna("[]").map(ast.literal_eval)  # Common Core codes; [] = untagged
+```
 
 ## 4. ASSISTments online experiments 2019-2021 (`assist_exp2021`) — downloaded
 
@@ -330,7 +386,7 @@ No MATHia dataset is in the public list, and I found no open MATHia download els
 |---|---|---|---|
 | ASSISTments 2009-10 | `ms_first_response` (counts hint or scaffold requests as the first action) | `overlap_time` | No; outliers up to 23 h |
 | ASSISTments 2012-13 | `ms_first_response`, or the first offset in `actions` | `end_time - start_time` (`overlap_time` ≈ first response here) | No; `resume` actions flag returns |
-| ASSISTments 2019-20 | from `slogs` (problem_started → first response or help) | `time_on_task` | {{1920_IDLE}} |
+| ASSISTments 2019-20 | from `slogs` (problem_started → first response or help) | `time_on_task` | Partly: never above action-log wall time and shorter for 3.0% (long gaps removed); max 6.5 h, p99 1,623 s |
 | ASSISTments experiments | `first_response_or_request_time` | `time_on_task` | Documented yes, observed no; use `session_count == 1` |
 | Junyi 2019 | — | `total_sec_taken` | Capped at 1,800 s |
 | EdNet-KT2 | `enter → first respond` | `enter → submit` | No cap; 0.005% over 1 h (sample) |
