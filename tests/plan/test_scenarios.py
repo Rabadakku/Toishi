@@ -74,10 +74,14 @@ def blocks_done(log: Log, *skills: str) -> None:
 
 
 def certify_all(log: Log, sid: str, d: int) -> None:
-    """M1 (3 of 3 at tier 2), M2 and M3 (4 of 4 in time at tiers 3 and 4) on day d."""
-    log.many(SK[sid].pool[3], day(d), "111")
-    log.many(SK[sid].pool[9], day(d), "1111", minutes=3.0)
-    log.many(SK[sid].pool[15], day(d), "1111", minutes=4.0)
+    """M1 (3 of 3 at tier 2), M2 and M3 (2 of 2 practice and a passed sitting at tiers 3
+    and 4) on day d."""
+    sp = SK[sid].pool
+    log.many(sp[3], day(d), "111")
+    log.many(sp[9], day(d), "11", minutes=3.0)
+    log.sitting(sp[10:12], day(d))
+    log.many(sp[15], day(d), "11", minutes=4.0)
+    log.sitting(sp[16:18], day(d))
 
 
 def test_slip_limited_skill_gets_no_growth_and_a_check_your_work_note() -> None:
@@ -86,8 +90,9 @@ def test_slip_limited_skill_gets_no_growth_and_a_check_your_work_note() -> None:
     0.9 (the feasibility note). A week of tier-2 practice at about 85% (14 of 17) keeps the
     posterior near 0.83: below 0.9 but above (1 - 0.12) x 0.9 = 0.792, so slips explain it.
     On day 8 a1 is slip-limited: no growth, one problem at its milestone tier (the
-    forecast stays below target), "check your work". At slip 0.02 the same history means
-    plain growth."""
+    forecast stays below target) with its retry slot held (wave 2), "check your work".
+    Answered right, the slot is released. At slip 0.02 the same history means plain
+    growth."""
     s = CourseSettings("c", start=D0)
     state = FakeState(default_e=0.99, slip=0.12)
     log = Log()
@@ -100,7 +105,10 @@ def test_slip_limited_skill_gets_no_growth_and_a_check_your_work_note() -> None:
     assert st.posterior_mean is not None
     assert 0.792 <= st.posterior_mean < 0.9
     mine = [i for i in p.items if i.skill_id == "a1"]
-    assert [(i.role, i.tier) for i in mine if i.role != "check"] == [("maintenance", 2)]
+    assert [(i.role, i.tier, i.reason) for i in mine if i.role != "check"] == [
+        ("maintenance", 2, "forecast"),
+        ("maintenance", 2, "retry"),
+    ]
     assert any("a1: limited by careless errors" in n for n in p.notes)
     assert any("best attainable" in n for n in p.notes)
     # Served and answered: nothing more for a1 today.
@@ -202,7 +210,8 @@ def test_mid_course_start_keeps_earlier_skills_until_a_check_says_otherwise() ->
     p = plan(log, day(20), forgetful, s)
     assert status_of(p, "a2").state == "keep"
     assert [i.reason for i in p.items if i.skill_id == "a2" and i.role == "maintenance"] == [
-        "forecast"
+        "forecast",
+        "retry",
     ]
 
 
@@ -227,7 +236,7 @@ def test_exam_pulls_m2_and_adds_its_day_as_a_maintenance_horizon() -> None:
     assert [m.deadline for m in ms["a1"]] == [day(5), day(14), day(28)]
     assert [m.deadline for m in ms["c1"]] == [day(19), day(28), day(42)]
     a1 = [i for i in p.items if i.skill_id == "a1" and i.role == "maintenance"]
-    assert [i.reason for i in a1] == ["exam"]
+    assert [i.reason for i in a1] == ["exam", "retry"]
     assert a1[0].p == pytest.approx(0.97 * 0.9 ** (1 / 4))
     log.many(SK["b1"].pool[3], day(15), "111")  # M1 at tier 2
     p = plan(log, day(24), FakeState(default_e=0.97), s)

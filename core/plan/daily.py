@@ -1,5 +1,6 @@
-"""The day's plan (docs/design/student-model.md v1.1, sections 4.3 and 4.6). Pure: no storage,
-no clock; today's served items and the observation history come in as plain values.
+"""The day's plan (docs/design/student-model.md, sections 4.3 and 4.6, with the wave 2 changes
+of docs/design/wave2-planner.md). Pure: no storage, no clock; today's served items and the
+observation history come in as plain values.
 
 What the day holds:
 - **New:** a skill whose introduction date has arrived gets its worked example, then up to 3
@@ -8,23 +9,30 @@ What the day holds:
   tier or the rung below, and stops for the day after 2 consecutive first-try successes.
 - **Maintenance:** a certified skill whose calibrated readiness at its certified tier,
   forecast for the next study day (or, within 21 days of an exam covering it, for the exam
-  day), falls below target gets one problem at that tier.
-- **After a miss (4.6):** a miss that was mostly execution (top suspect m < 0.5) gives the
-  skill one more problem later in the session when it has none left.
+  day), falls below target gets one problem at that tier, and one more slot held for the 4.6
+  retry: a miss that was mostly execution (top suspect m < 0.5) uses it later in the day.
+- **The stuck ladder (wave 2):** after a skill's misses today its next planned item becomes a
+  smaller problem (1 miss), a problem of the blamed prerequisite (2), or nothing: the skill is
+  set aside until the next study day (3), when it returns with a fresh family.
+- **A certification sitting (wave 2, v1.3):** M2 and M3 certify only through one: a closed-book
+  block of unseen problems at the milestone tier, after the first 20 minutes of the day.
 - **Reference checks:** every 10th item, a uniformly random unseen problem at the current (or
-  certified) tier of a uniformly random introduced skill.
-- **Caps:** 3 problems per skill per day (reference checks aside, so their draw stays
-  uniform); missed-milestone growth at most 40% of the day's items; new material first.
+  certified) tier of a uniformly random introduced skill, once the day's new material is done.
+- **Caps:** 3 problems per skill per day (reference checks and sittings aside); missed-
+  milestone growth at most 40% of the day's items; new material first.
 
 `plan_day` lays out everything left today, as an upper bound: each block and each growth
-allowance at its full size. `next_item` is its first item; the caller re-plans after each
-answer, so blocks end at their first success and growth stops after two in a row.
+allowance at its full size, each maintenance problem with its retry slot. `next_item` is its
+first item; the caller re-plans after each answer, so blocks end at their first success and
+growth stops after two in a row. **Re-plans never add items:** the day's first plan stamps its
+size on every item (`WorkItem.day_items`), and a later plan keeps the day's items within it,
+leaving out its lowest-priority items when anything new became due.
 """
 
 import random
 from collections import Counter, defaultdict
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from itertools import groupby
 
@@ -39,25 +47,57 @@ from core.plan.config import (
     GROWTH_ALLOWANCE,
     GROWTH_STOP_STREAK,
     HISTORY_MIN_CERTIFICATIONS,
+    LADDER_PREREQUISITE,
+    LADDER_SET_ASIDE,
     MISSED_SHARE,
     NEW_BLOCK_MAX,
     PRIORITY_MISSED,
     PRIORITY_NEW,
     PRIORITY_NORMAL,
     RETRY_MEMORY_SHARE,
+    RETURN_FAMILY_DAYS,
+    SITTING_MAX_SKILLS,
+    SITTING_MILESTONES,
+    SITTING_PASS_MIN,
+    SITTING_WARMUP_MINUTES,
     SKILL_DAILY_CAP,
+    UNCAPPED_ROLES,
 )
-from core.plan.order import Ordered, confusable_pairs, order
+from core.plan.ladder import (
+    Ladder,
+    blamed_prerequisite,
+    owner,
+    owners,
+    read_ladder,
+    returning,
+    top_blamed,
+)
+from core.plan.order import Ordered, arrange, confusable_pairs
 from core.plan.pace import in_scope, milestone_rule, standard_hours
 from core.plan.protocol import Predictor
 from core.plan.select import (
     Choice,
     Seen,
+    SittingPick,
     check_candidates,
-    choose_growth,
+    choose_growth_in,
     choose_maintenance,
     choose_new,
+    choose_prerequisite,
+    choose_return,
+    choose_sitting,
+    choose_smaller,
     suspects,
+)
+from core.plan.sitting import (
+    block_limits,
+    pass_chance,
+    practice_ready,
+    sat_today,
+    sigma_of,
+    sitting_id,
+    sitting_today,
+    waiting,
 )
 from core.plan.status import PlanContext, SkillView, previous_problem
 from core.plan.types import (
@@ -93,10 +133,12 @@ def plan_day[S](
     - `certifier`: `Certifier.from_model` over every first try, today's included (it carries
       the model's priors and a mid-course start's assumed-learned skills;
       `certifier.observations` is the history the variety, struggling and hours rules read);
-    - `served_today`: the items already served today, in order, with outcomes;
-    - `rng`: all randomness (reference checks, confusable adjacency). None: seeded from the
-      course, the day and the number of plan items served, so a re-plan at the same point
-      gives the same plan;
+    - `served_today`: the items already served today, in order, with outcomes, each with the
+      `WorkItem` as the planner returned it (its `day_items`, `ladder_for` and sitting fields
+      keep the day within its first plan and resume a sitting);
+    - `rng`: all randomness (reference checks, sittings, confusable adjacency). None: seeded
+      from the course, the day and the number of plan items served, so a re-plan at the same
+      point gives the same plan;
     - `next_study_day`: the maintenance forecast horizon (default tomorrow);
     - `spent_minutes`: minutes actually spent per attempt id (hours to keep pace; default the
       valid time of a correct try, else the standard time);
@@ -120,22 +162,33 @@ def plan_day[S](
         seed = f"{course.course_id}|{today.isoformat()}|{len(ctx.plan_served)}"
         rng = random.Random(seed)  # noqa: S311 - reproducible plans, not security
     views = ctx.views()
-    builder = _Builder(ctx)
+    builder = _Builder(ctx, read_ladder(ctx.served))
+    builder.sitting(views, rng)
     builder.new_blocks(views)
     builder.growth(views)
     builder.prerequisites(views)
     builder.maintenance(views)
-    builder.retries()
+    builder.apply_ladder()
+    builder.returns(views)
     kept, tail = builder.cap_missed()
     mixed = builder.mixed(kept)
-    regular = len(mixed) + len(tail) + sum(len(b) for b in builder.blocks)
+    blocks = builder.block_list()
+    sitting = list(builder.sitting_items)
+    regular = (
+        len(mixed)
+        + len(tail)
+        + sum(len(b) for b in blocks)
+        + len(sitting)
+        + len(builder.sitting_rest)
+    )
     checks = builder.checks(views, rng, regular)
     pairs = confusable_pairs(course.skills)
     served_items = [x.item for x in ctx.plan_served]
     order_seed = rng.random()
+    cap = builder.cap
     while True:
-        result = order(
-            builder.blocks,
+        result = arrange(
+            blocks,
             mixed,
             checks,
             rng=random.Random(order_seed),  # noqa: S311 - reproducible plans
@@ -143,22 +196,41 @@ def plan_day[S](
             confusable=pairs,
             continuing=builder.continuing,
             tail=tail,
+            sitting=sitting,
+            sitting_under_way=builder.sitting_rest,
+            warmup=SITTING_WARMUP_MINUTES,
+            minutes_served=builder.minutes_served,
         )
-        if main_share(served_items, result.items) <= MISSED_SHARE + EPS:
-            break
-        move = max((i for i, it in enumerate(mixed) if it.missed), default=None)
-        if move is None:
-            break
-        tail = [mixed[move], *tail]
-        mixed = mixed[:move] + mixed[move + 1 :]
+        if main_share(served_items, result.items) > MISSED_SHARE + EPS:
+            move = max((i for i, it in enumerate(mixed) if it.missed), default=None)
+            if move is not None:
+                tail = [mixed[move], *tail]
+                mixed = mixed[:move] + mixed[move + 1 :]
+                continue
+        if cap is not None and len(served_items) + len(result.items) > cap:
+            # Re-plans never add items (wave 2): the lowest-priority items give way.
+            if tail:
+                tail = tail[:-1]
+                continue
+            if mixed:
+                mixed = mixed[:-1]
+                continue
+            if sitting:
+                last = builder.last_sitting_skill()
+                sitting = [i for i in sitting if i.skill_id != last]
+                builder.drop_sitting_skill(last)
+                continue
+        break
     hours, basis = hours_to_keep_pace(ctx, spent_minutes or {})
     in_tail = {id(i) for i in tail}
     overflow = sum(1 for i in result.items if id(i) in in_tail)
-    notes = _notes(ctx, views, result, overflow)
+    notes = _notes(ctx, views, result, overflow, builder)
+    day_items = cap if cap is not None else len(served_items) + len(result.items)
+    items = tuple(replace(i, day_items=day_items) for i in result.items)
     return DayPlan(
         day=today,
-        items=result.items,
-        minutes=round(sum(i.expected_minutes for i in result.items), 6),
+        items=items,
+        minutes=round(sum(i.expected_minutes for i in items), 6),
         hours_to_keep_pace=hours,
         standard_hours=standard_hours(course.standard, settings),
         behind=tuple(v.skill_id for v in views if v.track == "behind"),
@@ -168,6 +240,10 @@ def plan_day[S](
         confusable=result.confusable,
         overflow=overflow,
         dropped=result.dropped,
+        set_aside=tuple(v.skill_id for v in views if v.skill_id in builder.aside),
+        sittings=builder.sittings_log,
+        adjacent=result.forced,
+        sitting_chances=tuple(builder.chances),
     )
 
 
@@ -218,29 +294,67 @@ def main_share(served: Sequence[WorkItem], planned: Sequence[WorkItem]) -> float
 
 
 class _Builder[S]:
-    """Collects the day's candidate items, skill by skill, under the per-skill caps."""
+    """Collects the day's candidate items, skill by skill, under the per-skill caps.
 
-    def __init__(self, ctx: PlanContext[S]) -> None:
+    Slots: an item uses a daily slot of its `owner` (the stuck skill for a ladder item, else
+    its own skill) and counts toward its own skill's 3-a-day cap; reference checks and
+    sitting problems use neither.
+    """
+
+    def __init__(self, ctx: PlanContext[S], ladder: Ladder) -> None:
         self.ctx = ctx
+        self.ladder = ladder
+        self.band = ctx.settings.growth_band
+        self.aside = frozenset(s for s in ladder.set_aside if s in ctx.skills)
         self.seen = Seen(ctx.history, ctx.today, ctx.served)
-        self.served_problems: Counter[ComponentId] = Counter()
-        self.served_roles: dict[ComponentId, Counter[str]] = defaultdict(Counter)
+        self.served_owned: Counter[ComponentId] = Counter()
+        self.served_skill: Counter[ComponentId] = Counter()
+        self.served_owned_growth: Counter[ComponentId] = Counter()
+        self.served_skill_growth: Counter[ComponentId] = Counter()
+        self.day_role: dict[ComponentId, str] = {}  # role of the first slot used today
         for x in ctx.plan_served:
-            if x.item.problem is not None and x.item.role != "check":
-                self.served_problems[x.item.skill_id] += 1
-                self.served_roles[x.item.skill_id][x.item.role] += 1
-        self.planned: Counter[ComponentId] = Counter()
-        self.planned_growth: Counter[ComponentId] = Counter()
-        self.blocks: list[list[WorkItem]] = []
+            it = x.item
+            if it.problem is None or it.role in UNCAPPED_ROLES:
+                continue
+            own = owner(it)
+            self.served_owned[own] += 1
+            self.served_skill[it.skill_id] += 1
+            if it.role == "growth":
+                self.served_owned_growth[own] += 1
+                self.served_skill_growth[it.skill_id] += 1
+            self.day_role.setdefault(own, it.role)
+        self.planned_owned: Counter[ComponentId] = Counter()
+        self.planned_skill: Counter[ComponentId] = Counter()
+        self.planned_owned_growth: Counter[ComponentId] = Counter()
+        self.planned_skill_growth: Counter[ComponentId] = Counter()
+        self.blocks: dict[ComponentId, list[WorkItem]] = {}
         self.lanes: dict[ComponentId, list[WorkItem]] = {}
         self.continuing: ComponentId | None = None
+        self.sitting_items: list[WorkItem] = []  # the day's sitting, not started: serve order
+        self.sitting_rest: list[WorkItem] = []  # the rest of a sitting under way
+        self.sittings_log: tuple[tuple[str, tuple[ComponentId, ...]], ...] = ()
+        self.chances: list[tuple[ComponentId, float]] = []
+        self.notes: list[str] = []
         self._previous: dict[ComponentId, ProblemSpec | None] = {}
+        self.minutes_served = sum(
+            x.minutes if x.minutes is not None else x.item.expected_minutes for x in ctx.plan_served
+        )
+        stamps = [x.item.day_items for x in ctx.plan_served if x.item.day_items is not None]
+        self.cap: int | None = min(stamps) if stamps else None
 
     # ------------------------------------------------------------------ helpers
 
     def room(self, skill_id: ComponentId) -> int:
-        """Problems the skill may still get today (3 a day outside Focused Practice)."""
-        return SKILL_DAILY_CAP - self.served_problems[skill_id] - self.planned[skill_id]
+        """Problems the skill may still get today: 3 a day outside Focused Practice, counting
+        the slots it owns and the problems of its own (a ladder item counts for both)."""
+        owned = self.served_owned[skill_id] + self.planned_owned[skill_id]
+        own = self.served_skill[skill_id] + self.planned_skill[skill_id]
+        return SKILL_DAILY_CAP - max(owned, own)
+
+    def growth_left(self, skill_id: ComponentId) -> int:
+        owned = self.served_owned_growth[skill_id] + self.planned_owned_growth[skill_id]
+        own = self.served_skill_growth[skill_id] + self.planned_skill_growth[skill_id]
+        return GROWTH_ALLOWANCE - max(owned, own)
 
     def previous(self, skill_id: ComponentId) -> ProblemSpec | None:
         if skill_id not in self._previous:
@@ -251,7 +365,7 @@ class _Builder[S]:
         """Two consecutive first-try successes today end the skill's growth for the day."""
         streak = 0
         for x in reversed(self.ctx.plan_served):
-            if x.item.skill_id != skill_id or x.item.problem is None or x.correct is None:
+            if skill_id not in owners(x.item) or x.item.problem is None or x.correct is None:
                 continue
             if not x.correct:
                 return False
@@ -289,28 +403,211 @@ class _Builder[S]:
             reason=reason or choice.reason,
         )
 
-    def add(self, item: WorkItem, *, lane: bool = True) -> None:
-        sid = item.skill_id
+    def _count(self, item: WorkItem, sign: int) -> None:
+        if item.problem is None or item.role in UNCAPPED_ROLES:
+            return
+        own = owner(item)
+        self.planned_owned[own] += sign
+        self.planned_skill[item.skill_id] += sign
+        if item.role == "growth":
+            self.planned_owned_growth[own] += sign
+            self.planned_skill_growth[item.skill_id] += sign
+
+    def add(self, item: WorkItem, *, to: list[WorkItem] | None = None) -> None:
+        """Plan an item: into `to` (a block), else its owner's lane."""
         if item.problem is not None:
             self.seen.add(item.problem.card_id)
-            self.planned[sid] += 1
-            self._previous[sid] = item.problem
-            if item.role == "growth":
-                self.planned_growth[sid] += 1
+            self._previous[item.skill_id] = item.problem
         elif item.example_card is not None:
             self.seen.add(item.example_card)
-        if lane:
-            self.lanes.setdefault(sid, []).append(item)
+        self._count(item, 1)
+        if to is not None:
+            to.append(item)
+        else:
+            self.lanes.setdefault(owner(item), []).append(item)
+
+    def swap(self, where: list[WorkItem], k: int, new: WorkItem) -> None:
+        """Replace the planned item `where[k]` by `new` (a ladder or return item)."""
+        old = where[k]
+        if old.problem is not None:
+            self.seen.discard(old.problem.card_id)
+        self._count(old, -1)
+        if new.problem is not None:
+            self.seen.add(new.problem.card_id)
+        self._count(new, 1)
+        where[k] = new
+
+    def remove(self, item: WorkItem) -> None:
+        for container in (*self.lanes.values(), *self.blocks.values()):
+            for k, it in enumerate(container):
+                if it is item:
+                    del container[k]
+                    if item.problem is not None:
+                        self.seen.discard(item.problem.card_id)
+                    self._count(item, -1)
+                    return
+
+    def next_slot(self, skill_id: ComponentId) -> tuple[list[WorkItem], int] | None:
+        """The skill's next planned problem: in its new block, else first in its lane."""
+        for container in (self.blocks.get(skill_id), self.lanes.get(skill_id)):
+            for k, it in enumerate(container or ()):
+                if it.problem is not None and it.role not in UNCAPPED_ROLES:
+                    return container or [], k
+        return None
+
+    def block_list(self) -> list[list[WorkItem]]:
+        """The new skills' blocks in course order, a block in progress first."""
+        found = [(sid, b) for sid, b in self.blocks.items() if b]
+        return [b for sid, b in sorted(found, key=lambda kv: kv[0] != self.continuing)]
+
+    # ------------------------------------------------------------------ the sitting
+
+    def sitting(self, views: Sequence[SkillView], rng: random.Random) -> None:
+        """The day's sitting: the rest of one under way, or a new one when skills are due
+        (wave 2 section 2, v1.3). Its problems are chosen before any practice, so practice
+        never takes the unseen problems a sitting needs."""
+        ctx = self.ctx
+        today = sitting_today(ctx.served)
+        if today.started:
+            self._resume(today.sitting, today.block, today.remaining)
+            return
+        due = [v for v in views if self.sitting_due(v)]
+        due.sort(key=lambda v: (_deadline(v), ctx.rank[v.skill_id]))
+        sigma = sigma_of(ctx.model, ctx.state)
+        chosen: list[tuple[SkillView, SittingPick]] = []
+        for v in due:
+            if len(chosen) >= SITTING_MAX_SKILLS:
+                break
+            if v.tier is None:
+                continue
+            pick = choose_sitting(v.skill, v.tier, self.seen, rng, retired=ctx.retired)
+            if pick is None:
+                self.notes.append(
+                    f"{v.skill_id}: too few tier-{v.tier} problems left for a sitting."
+                )
+                continue
+            chance = pass_chance([ctx.now(p) for p in pick.problems], pick.problems, sigma)
+            self.chances.append((v.skill_id, round(chance.chance, 6)))
+            if chance.chance < SITTING_PASS_MIN - EPS:
+                self.notes.append(
+                    f"{v.skill_id}: not yet at pace for its sitting (predicted pass "
+                    f"{chance.chance:.2f}: accuracy {chance.accuracy:.2f}, time "
+                    f"{chance.pace:.2f}; it needs {SITTING_PASS_MIN:.2f})."
+                )
+                continue
+            if pick.thin:
+                self.notes.append(
+                    f"{v.skill_id}: few unseen tier-{v.tier} problems are left, so its sitting "
+                    "reuses the least recently served ones."
+                )
+            chosen.append((v, pick))
+            for p in pick.problems:
+                self.seen.add(p.card_id)
+        if not chosen:
+            return
+        problems = [p for _, pick in chosen for p in pick.problems]
+        rng.shuffle(problems)
+        sid = sitting_id(ctx.course.course_id, ctx.today)
+        block = tuple(p.problem_id for p in problems)
+        limits = block_limits(problems)
+        self.sitting_items = [self._sitting_item(p, sid, block, limits) for p in problems]
+        self.sittings_log = ((sid, tuple(v.skill_id for v, _ in chosen)),)
+
+    def sitting_due(self, v: SkillView) -> bool:
+        """Wave 2 section 2's conditions, all but the pass chance: the current milestone is M2
+        or M3; readiness at its tier at least the target; 2 or more practice first tries
+        there, the last a success; no failed sitting in the 2 study days before today; not
+        set aside or sat today."""
+        ctx = self.ctx
+        current = v.current
+        if v.skill_id in self.aside or current is None or v.keep_mode or v.tier is None:
+            return False
+        if current.name not in SITTING_MILESTONES or not v.introduced or v.state == "new":
+            return False
+        if v.readiness is None or v.readiness < v.target - EPS:
+            return False
+        results = ctx.certifier.sittings(v.skill_id, ctx.today)
+        if sat_today(results, ctx.today) or waiting(results, ctx.today):
+            return False
+        at_tier = [o for o in ctx.by_skill.get(v.skill_id, ()) if o.problem.tier == v.tier]
+        passed = [r.day for r in results if r.outcome == "pass" and r.tier == v.tier]
+        return practice_ready(at_tier, passed)
+
+    def _sitting_item(
+        self,
+        problem: ProblemSpec,
+        sitting: str,
+        block: tuple[str, ...],
+        limits: Mapping[ComponentId, float],
+    ) -> WorkItem:
+        pred = self.ctx.now(problem)
+        view = self.ctx.view(problem.main_skill)
+        milestone = next(
+            (
+                m.name
+                for m in view.milestones
+                if m.name in SITTING_MILESTONES and m.tier == problem.tier
+            ),
+            None,
+        )
+        return WorkItem(
+            skill_id=problem.main_skill,
+            role="sitting",
+            problem=problem,
+            example_card=None,
+            expected_minutes=pred.median_minutes,
+            priority=PRIORITY_NORMAL,
+            tier=problem.tier,
+            milestone=milestone,
+            p=pred.p,
+            reason="sitting",
+            sitting=sitting,
+            time_limit=round(limits[problem.main_skill], 6),
+            sitting_block=block,
+        )
+
+    def _resume(self, sitting: str | None, block: Sequence[str], remaining: Sequence[str]) -> None:
+        """The rest of the sitting under way, in its order (a set-aside skill's left out)."""
+        ctx = self.ctx
+        found = {p.problem_id: p for s in ctx.course.skills for p in s.pool}
+        problems = [found[pid] for pid in block if pid in found]
+        limits = block_limits(problems)
+        skills = sorted(
+            {p.main_skill for p in problems if p.main_skill in ctx.skills},
+            key=lambda s: (_deadline(ctx.view(s)), ctx.rank[s]),
+        )  # the batch order: earliest deadline first
+        if sitting is not None:
+            self.sittings_log = ((sitting, tuple(skills)),)
+        for pid in remaining:
+            p = found.get(pid)
+            if p is None or p.main_skill in self.aside or sitting is None:
+                continue
+            item = self._sitting_item(p, sitting, tuple(block), limits)
+            self.seen.add(p.card_id)
+            self.sitting_rest.append(item)
+
+    def last_sitting_skill(self) -> ComponentId:
+        """The last skill batched into the sitting not yet started (the latest deadline)."""
+        if self.sittings_log and self.sittings_log[0][1]:
+            return self.sittings_log[0][1][-1]
+        return self.sitting_items[-1].skill_id
+
+    def drop_sitting_skill(self, skill_id: ComponentId) -> None:
+        """A skill taken out of a sitting not yet started (the day's plan is full)."""
+        self.sitting_items = [i for i in self.sitting_items if i.skill_id != skill_id]
+        for log_id, skills in self.sittings_log:
+            rest = tuple(s for s in skills if s != skill_id)
+            self.sittings_log = ((log_id, rest),) if rest else ()
 
     # ------------------------------------------------------------------ roles
 
     def new_blocks(self, views: Sequence[SkillView]) -> None:
         for v in views:
-            if v.state != "new":
+            if v.state != "new" or v.skill_id in self.aside:
                 continue
             if v.block.in_progress:
                 self.continuing = v.skill_id
-            block: list[WorkItem] = []
+            block = self.blocks.setdefault(v.skill_id, [])
             milestone = None if v.current is None else v.current.name
             if not v.block.example_today and v.block.example_card is not None:
                 example = WorkItem(
@@ -324,8 +621,7 @@ class _Builder[S]:
                     block=True,
                     reason="example",
                 )
-                self.add(example, lane=False)
-                block.append(example)
+                self.add(example, to=block)
             for _ in range(min(NEW_BLOCK_MAX - v.block.problems, self.room(v.skill_id))):
                 choice = choose_new(
                     v.skill,
@@ -336,26 +632,26 @@ class _Builder[S]:
                 )
                 if choice is None:
                     break
-                it = self.item(v, "new", choice, block=True)
-                self.add(it, lane=False)
-                block.append(it)
-            if block:
-                self.blocks.append(block)
+                self.add(self.item(v, "new", choice, block=True), to=block)
 
     def growth(self, views: Sequence[SkillView]) -> None:
         for v in views:
-            if v.growing and v.tier is not None:
+            sid = v.skill_id
+            # A skill whose day began with maintenance keeps to its retry slot (revoked or not).
+            if v.growing and v.tier is not None and sid not in self.aside:
+                if self.day_role.get(sid) == "maintenance":
+                    continue
                 self.grow(v, v.tier)
 
     def grow(self, view: SkillView, tier: int, *, reason: str | None = None) -> None:
         sid = view.skill_id
         if self.stopped(sid):
             return
-        allowance = GROWTH_ALLOWANCE - self.served_roles[sid]["growth"] - self.planned_growth[sid]
         suspect = suspects(self.ctx.served, sid)
         missed = view.track == "behind"
-        for i in range(min(allowance, self.room(sid))):
-            choice = choose_growth(
+        for i in range(min(self.growth_left(sid), self.room(sid))):
+            choice = choose_growth_in(
+                self.band,
                 view.skill,
                 tier,
                 self.ctx.now,
@@ -373,31 +669,89 @@ class _Builder[S]:
         """Struggling skills: growth for the prerequisites of their weakest component."""
         done: set[ComponentId] = set()
         for v in views:
-            if v.state != "struggling":
+            if v.state != "struggling" or v.skill_id in self.aside:
                 continue
             for r in v.prerequisites:
-                if r in done:
+                if r in done or r in self.aside:
                     continue
                 done.add(r)
                 rv = self.ctx.view(r)
-                if rv.growing or self.planned_growth[r] > 0:
+                if rv.growing or self.planned_owned_growth[r] > 0:
                     continue  # its own growth covers it
+                if self.day_role.get(r) == "maintenance":
+                    continue  # its slots today are its maintenance and retry
                 tier = rv.tier if rv.tier is not None else _routine_tier(rv.skill)
                 if tier is not None:
                     self.grow(rv, tier, reason="prerequisite")
 
     def maintenance(self, views: Sequence[SkillView]) -> None:
+        """One problem for each due skill, and its 4.6 retry slot held from the first plan
+        (wave 2: re-plans never add, so a slot an execution miss may need is reserved)."""
         for v in views:
-            if not v.maintained or v.tier is None:
-                continue
             sid = v.skill_id
-            if self.served_roles[sid]["maintenance"] > 0 or self.room(sid) <= 0:
+            if sid in self.aside or v.tier is None:
+                continue
+            role = self.day_role.get(sid)
+            if role == "maintenance":
+                self.retry(v)
+                continue
+            if role is not None or not v.maintained or self.room(sid) <= 0:
                 continue
             if v.assumed and not self.has_own_evidence(v):
                 continue  # assumed learned: reference checks test it first
             reason = self.due(v)
             if reason is None:
                 continue
+            for why in (reason, "retry"):
+                if self.room(sid) <= 0:
+                    break
+                choice = choose_maintenance(
+                    v.skill,
+                    v.tier,
+                    self.ctx.now,
+                    self.seen,
+                    target=v.target,
+                    previous=self.previous(sid),
+                    retired=self.ctx.retired,
+                )
+                if choice is None:
+                    break
+                self.add(self.item(v, "maintenance", choice, reason=why))
+
+    def retry(self, v: SkillView) -> None:
+        """4.6: after the day's maintenance problem was missed and the miss was mostly
+        execution (top suspect m < 0.5), its held slot stays for one more problem later (the
+        ladder then makes it a smaller one); otherwise the slot is released."""
+        sid = v.skill_id
+        if self.served_owned[sid] != 1 or self.room(sid) <= 0 or v.tier is None:
+            return
+        latest = next(
+            (
+                x
+                for x in reversed(self.ctx.plan_served)
+                if sid in owners(x.item) and x.item.problem is not None and x.correct is not None
+            ),
+            None,
+        )
+        if latest is None or latest.correct or latest.update is None or not latest.update.blame:
+            return
+        top = max(latest.update.blame, key=lambda kv: (kv[1], kv[0]))[0]
+        if dict(latest.update.memory_share).get(top, 0.0) >= RETRY_MEMORY_SHARE - EPS:
+            return
+        if v.growing:
+            choice = choose_growth_in(
+                self.band,
+                v.skill,
+                v.tier,
+                self.ctx.now,
+                self.seen,
+                previous=self.previous(sid),
+                bottleneck=v.bottleneck,
+                suspect=suspects(self.ctx.served, sid),
+                retired=self.ctx.retired,
+            )
+            role: Role = "growth"
+        elif v.maintained:
             choice = choose_maintenance(
                 v.skill,
                 v.tier,
@@ -407,8 +761,12 @@ class _Builder[S]:
                 previous=self.previous(sid),
                 retired=self.ctx.retired,
             )
-            if choice is not None:
-                self.add(self.item(v, "maintenance", choice, reason=reason))
+            role = "maintenance"
+        else:
+            return
+        if choice is not None:
+            missed = role == "growth" and v.track == "behind"
+            self.add(self.item(v, role, choice, missed=missed, reason="retry"))
 
     def has_own_evidence(self, view: SkillView) -> bool:
         post = view.posterior
@@ -435,50 +793,165 @@ class _Builder[S]:
                 return "exam"
         return None
 
-    def retries(self) -> None:
-        """4.6: after a miss that was mostly execution, one more problem later today."""
-        latest: dict[ComponentId, ServedItem] = {}
-        for x in self.ctx.plan_served:
-            if x.item.problem is not None and x.correct is not None:
-                latest[x.item.skill_id] = x
-        for sid, x in latest.items():
-            if x.correct or x.update is None or not x.update.blame:
+    # ------------------------------------------------------------------ the stuck ladder
+
+    def apply_ladder(self) -> None:
+        """Each skill with misses since its last success today: its next planned problem
+        becomes the rung's item (it never adds one; set-aside skills have none planned)."""
+        ctx = self.ctx
+        for sid in sorted(self.ladder.streak, key=lambda s: (ctx.rank.get(s, len(ctx.rank)), s)):
+            rung = self.ladder.rung(sid)
+            if not 1 <= rung < LADDER_SET_ASIDE or sid not in ctx.skills or sid in self.aside:
                 continue
-            top = max(x.update.blame, key=lambda kv: (kv[1], kv[0]))[0]
-            m = dict(x.update.memory_share).get(top, 0.0)
-            if m >= RETRY_MEMORY_SHARE - EPS or sid not in self.ctx.skills:
+            found = self.next_slot(sid)
+            if found is None:
                 continue
-            if self.planned[sid] > 0 or self.room(sid) <= 0:
+            where, k = found
+            new = self.ladder_item(sid, where[k], rung)
+            if new is not None:
+                self.swap(where, k, new)
+
+    def ladder_item(self, sid: ComponentId, old: WorkItem, rung: int) -> WorkItem | None:
+        ctx = self.ctx
+        misses = self.ladder.misses.get(sid, ())
+        if not misses:
+            return None
+        if old.problem is not None:
+            self.seen.discard(old.problem.card_id)  # the replaced card may be chosen again
+        try:
+            if rung >= LADDER_PREREQUISITE:
+                found = self.prerequisite_item(sid, old, misses[-2:])
+                if found is not None:
+                    return found
+            last = misses[-1]
+            tier = last.item.problem.tier if last.item.problem is not None else (old.tier or 1)
+            choice = choose_smaller(
+                ctx.skills[sid],
+                tier,
+                top_blamed(last, sid),
+                ctx.now,
+                self.seen,
+                band=self.band,
+                previous=self.previous(sid),
+                retired=ctx.retired,
+            )
+            if choice is None:
+                return None
+            return replace(
+                old,
+                problem=choice.problem,
+                expected_minutes=ctx.now(choice.problem).median_minutes,
+                tier=choice.problem.tier,
+                p=choice.p,
+                reason=choice.reason,
+                ladder=rung,
+                ladder_for=sid,
+            )
+        finally:
+            if old.problem is not None:
+                self.seen.add(old.problem.card_id)  # swap() takes it back when replaced
+
+    def prerequisite_item(
+        self, sid: ComponentId, old: WorkItem, last_two: Sequence[ServedItem]
+    ) -> WorkItem | None:
+        """Rung 2: a tier 1-2 problem of the component most blamed over the last two misses
+        (not the skill itself); when it has no problem to give, the skill's prerequisites in
+        course order. It fills the stuck skill's slot (`ladder_for`) and counts toward the
+        prerequisite's own 3-a-day cap, taking one of its planned items' places if full."""
+        ctx = self.ctx
+        skill = ctx.skills[sid]
+        top = blamed_prerequisite(last_two, sid, ctx.rank)
+        requires = sorted(skill.requires, key=lambda r: (ctx.rank.get(r, len(ctx.rank)), r))
+        tried: set[ComponentId] = set()
+        for c in [*([top] if top is not None else []), *requires]:
+            if c in tried or c == sid or c in self.aside or c not in ctx.skills:
                 continue
-            v = self.ctx.view(sid)
-            if v.tier is None or not v.introduced or v.state == "new":
+            tried.add(c)
+            info = ctx.skills[c]
+            if not info.pool or ctx.view(c).state == "new":
+                continue  # no pool, or its own new block covers it
+            choice = choose_prerequisite(
+                info,
+                ctx.now,
+                self.seen,
+                band=self.band,
+                previous=self.previous(c),
+                retired=ctx.retired,
+            )
+            if choice is None or (self.room(c) <= 0 and not self.make_room(c)):
                 continue
-            if v.growing:
-                choice = choose_growth(
-                    v.skill,
-                    v.tier,
-                    self.ctx.now,
-                    self.seen,
-                    previous=self.previous(sid),
-                    bottleneck=v.bottleneck,
-                    suspect=suspects(self.ctx.served, sid),
-                    retired=self.ctx.retired,
-                )
-                role: Role = "growth"
-            else:
-                choice = choose_maintenance(
-                    v.skill,
-                    v.tier,
-                    self.ctx.now,
-                    self.seen,
-                    target=v.target,
-                    previous=self.previous(sid),
-                    retired=self.ctx.retired,
-                )
-                role = "maintenance"
-            if choice is not None:
-                missed = role == "growth" and v.track == "behind"
-                self.add(self.item(v, role, choice, missed=missed, reason="retry"))
+            return WorkItem(
+                skill_id=c,
+                role=old.role,
+                problem=choice.problem,
+                example_card=None,
+                expected_minutes=ctx.now(choice.problem).median_minutes,
+                priority=old.priority,
+                tier=choice.problem.tier,
+                milestone=old.milestone,
+                missed=old.missed,
+                block=old.block,
+                p=choice.p,
+                reason=choice.reason,
+                ladder=LADDER_PREREQUISITE,
+                ladder_for=sid,
+            )
+        return None
+
+    def make_room(self, skill_id: ComponentId) -> bool:
+        """Free one of the skill's planned practice slots (its last one) for a ladder item
+        that is a problem of this skill; False when it has none to give."""
+        lane = self.lanes.get(skill_id, [])
+        for it in reversed(lane):
+            if it.problem is not None and it.ladder == 0 and it.role not in UNCAPPED_ROLES:
+                self.remove(it)
+                return self.room(skill_id) > 0
+        return False
+
+    def returns(self, views: Sequence[SkillView]) -> None:
+        """A skill set aside on its last day of practice returns with a problem from a family
+        not served in the last 7 days, at the tier where it was failing (wave 2 section 1)."""
+        ctx = self.ctx
+        for v in views:
+            sid = v.skill_id
+            if sid in self.aside or self.ladder.streak.get(sid, 0) > 0:
+                continue
+            tier = returning(ctx.by_skill.get(sid, ()), ctx.today)
+            if tier is None:
+                continue
+            found = self.next_slot(sid)
+            if found is None:
+                continue
+            where, k = found
+            old = where[k]
+            if old.problem is not None:
+                self.seen.discard(old.problem.card_id)
+            choice = choose_return(
+                v.skill,
+                tier,
+                ctx.now,
+                self.seen,
+                days=RETURN_FAMILY_DAYS,
+                band=self.band,
+                previous=self.previous(sid),
+                retired=ctx.retired,
+            )
+            if old.problem is not None:
+                self.seen.add(old.problem.card_id)
+            if choice is None:
+                continue
+            self.swap(
+                where,
+                k,
+                replace(
+                    old,
+                    problem=choice.problem,
+                    expected_minutes=ctx.now(choice.problem).median_minutes,
+                    tier=choice.problem.tier,
+                    p=choice.p,
+                    reason=choice.reason,
+                ),
+            )
 
     # ------------------------------------------------------------------ caps and checks
 
@@ -491,7 +964,7 @@ class _Builder[S]:
         missed_lanes = [(sid, items) for sid, items in missed_lanes if items]
 
         def urgency(sid: ComponentId) -> tuple[date, int]:
-            current = ctx.view(sid).current
+            current = ctx.view(sid).current if sid in ctx.skills else None
             deadline = current.deadline if current and current.deadline else date.max
             return deadline, ctx.rank.get(sid, 0)
 
@@ -500,8 +973,11 @@ class _Builder[S]:
         rounds = max((len(items) for _, items in missed_lanes), default=0)
         for r in range(rounds):
             ranked.extend(items[r] for _, items in missed_lanes if r < len(items))
-        others = sum(len(b) for b in self.blocks) + sum(
-            1 for lane in self.lanes.values() for i in lane if not i.missed
+        others = (
+            sum(len(b) for b in self.blocks.values())
+            + sum(1 for lane in self.lanes.values() for i in lane if not i.missed)
+            + len(self.sitting_items)
+            + len(self.sitting_rest)
         )
         served = [x.item for x in ctx.plan_served]
         served_missed = sum(i.missed for i in served)
@@ -517,9 +993,10 @@ class _Builder[S]:
     def mixed(self, keep_missed: set[int]) -> list[WorkItem]:
         """The mixed set in round-robin order over skills (course order), so maintenance and
         growth interleave; missed-milestone items beyond the share left out."""
+        rank = self.ctx.rank
         lanes = [
             [i for i in lane if not i.missed or id(i) in keep_missed]
-            for _, lane in sorted(self.lanes.items(), key=lambda kv: self.ctx.rank[kv[0]])
+            for _, lane in sorted(self.lanes.items(), key=lambda kv: rank.get(kv[0], len(rank)))
         ]
         out: list[WorkItem] = []
         for r in range(max((len(lane) for lane in lanes), default=0)):
@@ -530,15 +1007,20 @@ class _Builder[S]:
         self, views: Sequence[SkillView], rng: random.Random, regular: int
     ) -> list[WorkItem]:
         """Reference checks in draw order: a uniformly random eligible skill (introduced, past
-        its new block, with an unseen problem at its current or certified tier), then a
-        uniformly random unseen problem of it. Drawn for every ten the day could reach."""
+        its new block, not set aside today, with an unseen problem at its current or certified
+        tier), then a uniformly random unseen problem of it. Drawn for every ten the day could
+        reach."""
         served = len(self.ctx.plan_served)
         wanted = (served + 2 * regular) // 10 + 1
         out: list[WorkItem] = []
         pool = [
             v
             for v in views
-            if v.introduced and v.state != "new" and not v.skill.background and v.tier is not None
+            if v.introduced
+            and v.state != "new"
+            and not v.skill.background
+            and v.tier is not None
+            and v.skill_id not in self.aside
         ]
         for _ in range(wanted):
             eligible = [
@@ -567,6 +1049,11 @@ class _Builder[S]:
             self.seen.add(problem.card_id)
             out.append(item)
         return out
+
+
+def _deadline(v: SkillView) -> date:
+    current = v.current
+    return current.deadline if current is not None and current.deadline else date.max
 
 
 def _checks_in(served: int, regular: int) -> int:
@@ -754,7 +1241,11 @@ def feasibility[S](
 
 
 def _notes[S](
-    ctx: PlanContext[S], views: Sequence[SkillView], result: Ordered, overflow: int
+    ctx: PlanContext[S],
+    views: Sequence[SkillView],
+    result: Ordered,
+    overflow: int,
+    builder: _Builder[S],
 ) -> tuple[str, ...]:
     notes: list[str] = []
     feas = feasibility(ctx.model, ctx.state, ctx.course, ctx.settings)
@@ -766,14 +1257,22 @@ def _notes[S](
             "work: missed-milestone work is held to 40% of the day until then."
         )
     if result.dropped:
+        notes.append(f"{len(result.dropped)} item(s) left out: no place for them today.")
+    for skill_id, n in Counter(result.forced).items():
         notes.append(
-            f"{len(result.dropped)} item(s) left out: no other skill to put between them and "
-            "the same skill's items."
+            f"{skill_id}: {n} item(s) right after one of its own: no other skill's item was "
+            "left to put between them."
         )
     for v in views:
+        if v.skill_id in builder.aside:
+            notes.append(
+                f"{v.skill_id}: set aside for today after 3 misses in a row. Textbook: "
+                f"{v.skill.deck}."
+            )
         if v.state == "slip-limited":
             notes.append(f"{v.skill_id}: limited by careless errors. Check your work.")
         elif v.state == "struggling":
             extra = f" Practice added for: {', '.join(v.prerequisites)}." if v.prerequisites else ""
             notes.append(f"{v.skill_id}: struggling. See the textbook section.{extra}")
+    notes.extend(dict.fromkeys(builder.notes))
     return tuple(notes)

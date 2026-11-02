@@ -281,10 +281,10 @@ def _diagnostics(lines: list[str], data: ReportInput) -> None:
     add("")
     add(
         "Planned items and minutes are what the policy reported for the day (the design never "
-        "caps them); served is what fit in the budget. Fast: the share of correct tier 3+ first "
-        "tries within T*. M2 and M3 certification needs P(correct and within T*) at or above "
-        "the target, so with a 0.90 target a student who is always right still needs about "
-        "90% of solves within T*."
+        "caps them; P1's later plans keep within the day's first plan); served is what fit in "
+        "the budget. Fast: the share of correct tier 3+ first tries within T*. P1 certifies "
+        "M2 and M3 only through a sitting (design v1.3): every sitting problem right, unaided, "
+        "with the summed time within the summed T*; its posteriors are accuracy only."
     )
     add("")
     add(
@@ -304,6 +304,23 @@ def _diagnostics(lines: list[str], data: ReportInput) -> None:
             f"{stat(r.ready_pace.get(90) for r in runs).fmt()} | "
             f"{stat(r.ever['M3'] for r in runs).fmt()} |"
         )
+    add("")
+    add("### Certification sittings (P1)")
+    add("")
+    add(
+        "A skill-sitting is one skill's part of a day's sitting (2 or 3 unseen problems at the "
+        "milestone tier). Passed: every problem right and the summed time within the summed "
+        "T*. Per run, mean over seeds."
+    )
+    add("")
+    add("| Truth | Profile | Skill-sittings | Passed |")
+    add("|---|---|---|---|")
+    for (truth, profile, policy), runs in sorted(groups.items()):
+        if policy != "P1":
+            continue
+        total = stat(float(r.sittings) for r in runs).mean
+        passed = sum(r.sitting_passes for r in runs) / max(1, sum(r.sittings for r in runs))
+        add(f"| {truth} | {profile} | {total:.1f} | {_pct(passed)} |")
     add("")
     add("### Certified against truly ready, at each deadline")
     add("")

@@ -1,5 +1,6 @@
-"""Practice planner (docs/design/student-model.md v1.1, sections 3.7, 3.8 and 4). Pure: no
-storage, no clock, no I/O; randomness only through a `random.Random` passed in.
+"""Practice planner (docs/design/student-model.md, sections 3.7, 3.8 and 4, with the wave 2
+changes of docs/design/wave2-planner.md). Pure: no storage, no clock, no I/O; randomness only
+through a `random.Random` passed in.
 
 Design 8's functions, by module (`order` is `core.plan.order.order`; re-exporting it here
 would shadow its own module):
@@ -11,6 +12,9 @@ would shadow its own module):
 - `select`: `choose_problem`
 - `order`: `order`
 - `protocol`: `Predictor`, the planner's view of the student model
+
+Wave 2 helpers: `ladder` (the stuck ladder's streaks), `sitting` (certification sittings:
+the pace and pass chances, a sitting under way).
 
 Implementation choices where the design leaves room: docs/design/planner-impl-notes.md.
 """

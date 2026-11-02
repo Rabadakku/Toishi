@@ -1,20 +1,27 @@
-"""The order of the day's items (docs/design/student-model.md v1.1, sections 4.3 and 4.5).
+"""The order of the day's items (docs/design/student-model.md, sections 4.3 and 4.5, with the
+wave 2 changes of docs/design/wave2-planner.md).
 
+- A sitting already under way comes first, whole: its problems are served consecutively.
 - New material first: each new skill's block (worked example, then its first problems) is
-  served whole, a block already in progress before any other.
-- Then the mixed set: no two consecutive items of one skill (a new skill's block is the only
-  exception), missed-milestone items spread evenly through it (no prefix of the mixed part
-  holds more than its overall share), the caller's order kept otherwise.
+  served whole, a block already in progress before any other. No reference check comes
+  before the day's new material is done (a check is not new material: gate 6.2 "new
+  material is always served on its date").
+- Then the mixed set: no two consecutive items of one skill where there is any choice (a new
+  skill's block and the sitting are the exceptions), missed-milestone items spread evenly
+  through it (no prefix of the mixed part holds more than its overall share), the caller's
+  order kept otherwise. A unit that can only go next to its own skill is placed there anyway
+  (wave 2) and logged in `Ordered.forced`, never dropped.
+- The day's sitting (not yet started) is one block placed at the first boundary after 20
+  minutes of the day's expected time, or after the mixed set when the day has less.
 - Last, the missed-milestone items beyond the 40% share (the caller decides which), so the
   share holds for everything up to the day's last item of other work.
 - Every 10th item of the study day is a reference check. When the 10th position falls inside
-  a new skill's block, or the check's skill would sit next to its own skill, the check comes
-  at the next free boundary of the same ten; a decade's check is never made up later.
+  a block (new material or the sitting), or the check's skill would sit next to its own
+  skill, the check comes at the next free boundary of the same ten; a decade's check is never
+  made up later.
 - Confusable pairs present in the plan are drawn adjacent or apart with probability 0.5; an
   adjacent pair is glued into one unit (in random order), an apart pair is kept from
   touching where there is a choice. Every draw is logged in `Ordered.confusable`.
-- An item that can't be placed without two same-skill items in a row is dropped (and
-  reported), never placed: the no-adjacency rule is hard.
 
 The only randomness is `rng`.
 """
@@ -36,8 +43,9 @@ SEARCH_BUDGET = 20_000  # ... of at most this many steps (else the greedy order 
 @dataclass(frozen=True, slots=True)
 class Ordered:
     items: tuple[WorkItem, ...]
-    dropped: tuple[WorkItem, ...]
+    dropped: tuple[WorkItem, ...]  # items that could not be placed at all (none: wave 2)
     confusable: tuple[ConfusableDecision, ...]
+    forced: tuple[ComponentId, ...] = ()  # one entry per item placed next to its own skill
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,12 +88,16 @@ def _feasible(counts: Counter[ComponentId], n: int, last: ComponentId | None) ->
 
 
 class _Sequencer:
-    def __init__(self, served: Sequence[WorkItem], checks: Sequence[WorkItem]) -> None:
+    def __init__(
+        self, served: Sequence[WorkItem], checks: Sequence[WorkItem], minutes: float = 0.0
+    ) -> None:
         self.served_n = len(served)
         self.seq: list[WorkItem] = []
         self.checks = deque(checks)
         self.check_at = [i + 1 for i, it in enumerate(served) if it.role == "check"]
         self.last: ComponentId | None = served[-1].skill_id if served else None
+        self.minutes = minutes  # the day's expected minutes so far (served, then placed)
+        self.forced: list[ComponentId] = []
 
     @property
     def next_pos(self) -> int:
@@ -115,6 +127,15 @@ class _Sequencer:
             self.check_at.append(self.next_pos)
         self.seq.append(item)
         self.last = item.skill_id
+        self.minutes += item.expected_minutes
+
+    def place_unit(self, items: Sequence[WorkItem], *, block: bool = False) -> None:
+        """Place a unit's items in a row; outside a block, a unit whose first item has the
+        last item's skill is a forced adjacency."""
+        if items and not block and self.last is not None and items[0].skill_id == self.last:
+            self.forced.append(items[0].skill_id)
+        for item in items:
+            self.place(item)
 
     def maybe_check(self, before: ComponentId | None = None) -> bool:
         """Place the due check now if its skill touches neither neighbour."""
@@ -145,49 +166,109 @@ def order(
     its own skill). `mixed`: every other regular item, in the caller's preferred order.
     `tail`: missed-milestone items beyond the 40% share, served after everything else.
     `checks`: reference checks in draw order; as many are used as the day's tens need.
+    (`arrange` also places the day's sitting.)
     """
-    sq = _Sequencer(served, checks)
+    return arrange(
+        blocks,
+        mixed,
+        checks,
+        rng=rng,
+        served=served,
+        confusable=confusable,
+        continuing=continuing,
+        tail=tail,
+    )
 
-    # New material first.
+
+def arrange(
+    blocks: Sequence[Sequence[WorkItem]],
+    mixed: Sequence[WorkItem],
+    checks: Sequence[WorkItem] = (),
+    *,
+    rng: random.Random,
+    served: Sequence[WorkItem] = (),
+    confusable: Iterable[tuple[ComponentId, ComponentId]] = (),
+    continuing: ComponentId | None = None,
+    tail: Sequence[WorkItem] = (),
+    sitting: Sequence[WorkItem] = (),
+    sitting_under_way: Sequence[WorkItem] = (),
+    warmup: float = 0.0,
+    minutes_served: float = 0.0,
+) -> Ordered:
+    """`order`, with the day's sitting: `sitting_under_way` (the rest of a sitting already
+    started) comes first; `sitting` (one not started, in serve order) comes at the first unit
+    boundary after the new material where the day's expected minutes (`minutes_served`, then
+    the placed items') reach `warmup`, or after the mixed set when they never do."""
+    sq = _Sequencer(served, checks, minutes_served)
+    sq.place_unit(sitting_under_way, block=True)
+
+    # New material first, and no reference check until it is done.
     ordered_blocks = sorted(
         (tuple(b) for b in blocks if b), key=lambda b: 0 if b[0].skill_id == continuing else 1
     )
-    for i, block in enumerate(ordered_blocks):
-        own = i == 0 and block[0].skill_id == continuing
-        if not own:
-            sq.maybe_check(before=block[0].skill_id)
-        for item in block:
-            sq.place(item)
+    for block in ordered_blocks:
+        sq.place_unit(block, block=True)
 
-    # The mixed set, then the overflow of missed-milestone work.
+    # The mixed set (the sitting inside it), then the overflow of missed-milestone work.
     units, decisions = _glue(mixed, confusable, rng)
     apart: dict[ComponentId, set[ComponentId]] = {}
     for a, b, adjacent in decisions:
         if not adjacent:
             apart.setdefault(a, set()).add(b)
             apart.setdefault(b, set()).add(a)
-    dropped: list[WorkItem] = []
-    _place(sq, units, apart, dropped)
-    _place(sq, [_Unit((item,), i) for i, item in enumerate(tail)], apart, dropped)
+    hold = _Sitting(list(sitting), warmup)
+    _place(sq, units, apart, hold)
+    hold.place(sq, force=True)
+    _place(sq, [_Unit((item,), i) for i, item in enumerate(tail)], apart, None)
 
     seq = sq.seq
     logged = []
     for a, b, adjacent in decisions:
         together = any({x.skill_id, y.skill_id} == {a, b} for x, y in pairwise(seq))
         logged.append(ConfusableDecision(a, b, adjacent, together))
-    return Ordered(tuple(seq), tuple(dropped), tuple(logged))
+    return Ordered(tuple(seq), (), tuple(logged), tuple(sq.forced))
+
+
+class _Sitting:
+    """The day's sitting, waiting for its place: one block, never split."""
+
+    def __init__(self, items: list[WorkItem], warmup: float) -> None:
+        self.items = items
+        self.warmup = warmup
+
+    @property
+    def pending(self) -> bool:
+        return bool(self.items)
+
+    def place(self, sq: _Sequencer, *, force: bool = False) -> bool:
+        """Place the block now if the warm-up is done (or `force`), starting it with a skill
+        other than the last item's when it has one."""
+        if not self.items or (not force and sq.minutes < self.warmup - EPS):
+            return False
+        items = self.items
+        if items[0].skill_id == sq.last:
+            other = next((k for k, it in enumerate(items) if it.skill_id != sq.last), None)
+            if other is None and not force:
+                return False
+            if other is not None:
+                items = [items[other], *items[:other], *items[other + 1 :]]
+        sq.maybe_check(before=items[0].skill_id)
+        sq.place_unit(items)
+        self.items = []
+        return True
 
 
 def _place(
     sq: _Sequencer,
     units: Sequence[_Unit],
     apart: dict[ComponentId, set[ComponentId]],
-    dropped: list[WorkItem],
+    sitting: _Sitting | None,
 ) -> None:
-    """Place the units one at a time: never the last item's skill next (a unit that can't go
-    anywhere is dropped), keeping the rest arrangeable, keeping the next check's skill off
-    its neighbours, spreading missed-milestone units evenly (no prefix above their share),
-    keeping apart-drawn confusable pairs from touching, the caller's order otherwise."""
+    """Place the units one at a time: the last item's skill next only when nothing else can
+    go (a forced adjacency, logged), keeping the rest arrangeable, keeping the next check's
+    skill off its neighbours, spreading missed-milestone units evenly (no prefix above their
+    share), keeping apart-drawn confusable pairs from touching, the caller's order otherwise.
+    The sitting goes in at the first boundary after its warm-up."""
     remaining = sorted(units, key=lambda u: u.index)
     counts: Counter[ComponentId] = Counter(i.skill_id for u in remaining for i in u.items)
     left = sum(len(u.items) for u in remaining)
@@ -201,22 +282,18 @@ def _place(
         left -= len(u.items)
 
     while remaining:
+        if sitting is not None and sitting.place(sq):
+            continue
         if sq.maybe_check():
             continue
-        if len(remaining) <= SEARCH_UNITS:
+        if len(remaining) <= SEARCH_UNITS and (sitting is None or not sitting.pending):
             found = _search(sq, remaining, strict=True) or _search(sq, remaining, strict=False)
             if found is not None:
                 for u in found:
                     sq.maybe_check()
-                    for item in u.items:
-                        sq.place(item)
+                    sq.place_unit(u.items)
                 return
-        cands = [u for u in remaining if u.first != sq.last]
-        if not cands:
-            victim = max((u for u in remaining if u.first == sq.last), key=lambda u: u.index)
-            take(victim)
-            dropped.extend(victim.items)
-            continue
+        cands = [u for u in remaining if u.first != sq.last] or list(remaining)
         feasible = [
             u
             for u in cands
@@ -238,8 +315,7 @@ def _place(
         }
         best = min(feasible or cands, key=lambda u: keys[id(u)])
         take(best)
-        for item in best.items:
-            sq.place(item)
+        sq.place_unit(best.items)
         placed += 1
         placed_missed += best.missed
 

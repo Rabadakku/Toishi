@@ -2,7 +2,7 @@
 
 from itertools import pairwise
 
-from core.plan.order import confusable_pairs, order
+from core.plan.order import arrange, confusable_pairs, order
 from core.plan.types import WorkItem
 from tests.plan.helpers import problem, rng, skill
 
@@ -55,15 +55,89 @@ def test_mixed_set_never_puts_one_skill_twice_in_a_row() -> None:
     assert got.dropped == ()
 
 
-def test_items_that_cannot_be_separated_are_dropped() -> None:
-    """Three a's and nothing else: one is served, two dropped. After a served a, the only a
-    can't go at all. The block's last a can't be followed by another a either."""
+def test_items_that_cannot_be_separated_are_placed_next_to_each_other() -> None:
+    """Wave 2 (4 Fixes): three a's and nothing else are all placed, two of them right after
+    an a (logged in `forced`); nothing is dropped. After a served a, the only a still goes
+    next. The block's last a followed by another a: placed, one forced adjacency. With a b
+    available nothing is forced."""
     got = order([], [wi("a", 1), wi("a", 2), wi("a", 3)], rng=rng())
-    assert (len(got.items), len(got.dropped)) == (1, 2)
+    assert (len(got.items), got.dropped, got.forced) == (3, (), ("a", "a"))
     got = order([], [wi("a", 1)], rng=rng(), served=[wi("a", 9)])
-    assert (got.items, len(got.dropped)) == ((), 1)
+    assert (len(got.items), got.dropped, got.forced) == (1, (), ("a",))
     got = order([block("a")], [wi("a", 1)], rng=rng())
-    assert (len(got.items), len(got.dropped)) == (4, 1)
+    assert (len(got.items), got.dropped, got.forced) == (5, (), ("a",))
+    got = order([block("a")], [wi("a", 1), wi("b", 1)], rng=rng())
+    assert [i.skill_id for i in got.items][4:] == ["b", "a"]
+    assert got.forced == ()
+
+
+def test_no_check_comes_before_the_new_material_is_done() -> None:
+    """Gate 6.2 "new material is always served on its date": four blocks of 4 fill positions
+    1-16. The 10th falls in the third block; the check waits for the last block and comes
+    17th, never between two blocks (13th)."""
+    blocks = [block("a"), block("b"), block("c"), block("d")]
+    got = order(blocks, [wi("e"), wi("f")], [check("x")], rng=rng())
+    roles = [i.role for i in got.items]
+    assert roles[:16] == ["new"] * 16
+    assert roles[16] == "check"
+
+
+def sitting(*skills: str, minutes: float = 4.0) -> list[WorkItem]:
+    return [
+        WorkItem(s, "sitting", problem(f"{s}.sit.{k}", s, 3), None, minutes, 1, sitting="d")
+        for k, s in enumerate(skills)
+    ]
+
+
+def test_a_sitting_starts_after_20_minutes_of_the_day_as_one_block() -> None:
+    """Items of 3 minutes: after 7 of them (21 minutes) the sitting (q, r, q) goes in whole;
+    the rest of the mixed set follows. With 15 minutes already served it starts after 2."""
+    mixed = [wi(f"s{i}") for i in range(10)]
+    got = arrange([], mixed, rng=rng(), sitting=sitting("q", "r", "q"), warmup=20.0)
+    roles = [i.role for i in got.items]
+    assert roles[7:10] == ["sitting"] * 3
+    assert [i.skill_id for i in got.items][7:10] == ["q", "r", "q"]
+    assert roles.count("growth") == 10
+    got = arrange([], mixed, rng=rng(), sitting=sitting("q", "r"), warmup=20.0, minutes_served=15.0)
+    assert [i.role for i in got.items][2:4] == ["sitting", "sitting"]
+
+
+def test_a_short_day_puts_its_sitting_after_the_mixed_set_and_before_the_overflow() -> None:
+    """Two 3-minute items never reach 20 minutes: the sitting follows them, ahead of the
+    missed-milestone overflow (the tail)."""
+    got = arrange(
+        [],
+        [wi("a"), wi("b")],
+        rng=rng(),
+        tail=[wi("t", missed=True)],
+        sitting=sitting("q", "r"),
+        warmup=20.0,
+    )
+    assert [i.skill_id for i in got.items] == ["a", "b", "q", "r", "t"]
+
+
+def test_a_sitting_under_way_comes_first_and_its_first_item_avoids_the_last_skill() -> None:
+    """The rest of a started sitting precedes even new material. A sitting placed after an
+    item of its own first skill starts with another of its skills when it has one."""
+    got = arrange(
+        [block("n")], [wi("a")], rng=rng(), sitting_under_way=sitting("q", "r"), warmup=20.0
+    )
+    assert [i.skill_id for i in got.items][:2] == ["q", "r"]
+    got = arrange(
+        [], [wi("a")], rng=rng(), served=[wi("q", 9)], sitting=sitting("q", "r", "q"), warmup=0.0
+    )
+    assert [i.skill_id for i in got.items] == ["r", "q", "q", "a"]
+    assert got.forced == ()
+
+
+def test_a_check_due_inside_the_sitting_follows_it() -> None:
+    """Eight 3-minute items (24 minutes; the sitting goes in after the 7th): the sitting
+    covers positions 8-10, so the 10th position's check comes right after it (11th)."""
+    mixed = [wi(f"s{i}") for i in range(10)]
+    got = arrange([], mixed, [check("x")], rng=rng(), sitting=sitting("q", "r", "q"), warmup=20.0)
+    roles = [i.role for i in got.items]
+    assert roles[7:10] == ["sitting"] * 3
+    assert roles[10] == "check"
 
 
 def test_every_tenth_item_is_a_check() -> None:

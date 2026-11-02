@@ -116,23 +116,58 @@ def test_new_blocks_example_then_up_to_three_problems_minutes_from_medians() -> 
 
 
 def test_a_block_continues_until_its_first_success() -> None:
-    """After a1's example and a miss, a1's block continues next. After a success, a1 joins
-    the mixed set: the other blocks first, then one growth problem (3 a day, 2 used). Here
-    the 10th position falls in a3's block, so the day's check follows it; a1 is the only
-    skill past its block, so the check is a1's and a1's growth problem, which can't sit next
-    to it, is dropped (and reported)."""
+    """After a1's example and a miss, a1's block continues next (with the ladder's smaller
+    problem: one tier lower, at least tier 1). After a success, a1 joins the mixed set: the
+    other blocks first. The day's first plan held 12 items; 3 are served and the other
+    blocks keep 8, so one slot is left: a1's growth problem would need it and a reference
+    check after it, so it waits (re-plans never add items), and nothing is dropped."""
     log = Log()
     served: list[ServedItem] = []
     first = plan(log, D0)
+    assert len(first.items) == 12
+    assert all(i.day_items == 12 for i in first.items)
     serve(log, served, first.items[0], D0, None)
     serve(log, served, first.items[1], D0, False)
     nxt = plan(log, D0, served=served)
-    assert (nxt.items[0].skill_id, nxt.items[0].role, nxt.items[0].block) == ("a1", "new", True)
+    head = nxt.items[0]
+    assert (head.skill_id, head.role, head.block, head.ladder) == ("a1", "new", True, 1)
+    assert head.tier == 1
+    assert head.reason == "ladder:smaller"
     serve(log, served, nxt.items[0], D0, True)
     after = plan(log, D0, served=served)
     assert [i.skill_id for i in after.items[:8]] == ["a2"] * 4 + ["a3"] * 4
-    assert [(i.skill_id, i.role) for i in after.items[8:]] == [("a1", "check")]
-    assert [(i.skill_id, i.role) for i in after.dropped] == [("a1", "growth")]
+    assert len(served) + len(after.items) <= 12
+    assert after.dropped == ()
+
+
+def test_new_material_is_never_deferred_and_nothing_else_comes_between_blocks() -> None:
+    """Gate 6.2 "new material is always served on its date" (coordinator, 2026-11-02: in the
+    calc1 matrix a reference check came between two new blocks, roles nnnnnnnnncnnnnn, and
+    the hour ran out before the later blocks: 112 introductions missed). Day 7: four skills
+    are new (16 block items) while six grow, so the 10th position falls in the third block.
+    At every step of the session the day's new items come first and together, the check
+    after the last of them; the plan has no budget to defer them by. (Before the fix the
+    check came 13th, between the third and fourth blocks.)"""
+    a, b = "K::U1::A", "K::U1::B"
+    old = [skill(f"o{i}", a, i, problems=big(f"o{i}")) for i in range(6)]
+    new = [skill(f"n{i}", b, 10 + i, example=f"ex.n{i}", problems=big(f"n{i}")) for i in range(4)]
+    cr = course([(a, 2.0), (b, 2.0)], [*old, *new])
+    model = fake(cr)
+    log = Log()
+    for sk in old:
+        log.add(sk.pool[0], D0, True, role="new")
+    served: list[ServedItem] = []
+    for k in range(17):
+        now = at(day(7), 600 + k)
+        priors = model_priors(model, FakeState(), cr, now)
+        cert = Certifier.for_course(log.items, cr, SETTINGS, today=day(7), priors=priors)
+        p = plan_day(model, FakeState(), cert, cr, SETTINGS, day(7), now, served, rng=rng(k))
+        day_items = [*(x.item for x in served), *p.items]
+        new_at = [i for i, it in enumerate(day_items) if it.role == "new"]
+        assert new_at == list(range(16)), [it.role for it in day_items]
+        assert day_items[16].role == "check"
+        item = p.items[0]
+        serve(log, served, item, day(7), False if item.problem is not None else None)
 
 
 def test_growth_up_to_three_a_day_interleaved() -> None:
@@ -175,11 +210,15 @@ def test_per_skill_cap_of_three_problems_a_day() -> None:
 
 
 def certified_a1(log: Log, d: int = 1) -> None:
-    """a1: block success, then M1 (3 of 3 at tier 2), M2 and M3 (4 of 4 in time)."""
-    log.add(SK["a1"].pool[0], D0, True, role="new")
-    log.many(SK["a1"].pool[3], day(d), "111")
-    log.many(SK["a1"].pool[9], day(d), "1111", minutes=3.0)
-    log.many(SK["a1"].pool[15], day(d), "1111", minutes=4.0)
+    """a1: block success, then M1 (3 of 3 at tier 2), M2 and M3 (2 of 2 practice and a
+    passed sitting at tiers 3 and 4)."""
+    a1 = SK["a1"].pool
+    log.add(a1[0], D0, True, role="new")
+    log.many(a1[3], day(d), "111")
+    log.many(a1[9], day(d), "11", minutes=3.0)
+    log.sitting(a1[10:12], day(d))
+    log.many(a1[15], day(d), "11", minutes=4.0)
+    log.sitting(a1[16:18], day(d))
 
 
 def maint(state: FakeState, today: date, settings: CourseSettings = SETTINGS) -> list[WorkItem]:
@@ -192,12 +231,16 @@ def maint(state: FakeState, today: date, settings: CourseSettings = SETTINGS) ->
 def test_maintenance_when_tomorrows_forecast_falls_below_target() -> None:
     """a1 certified at tier 4 (e 0.97). Last practised a day ago with stability 1 day:
     tomorrow R = 0.9^2 = 0.81, readiness 0.97 x 0.81 = 0.79 < 0.9: one tier-4 problem,
-    reason "forecast". Stability 100 days: R = 0.998, readiness 0.968: none."""
+    reason "forecast", and its 4.6 retry slot held from the first plan (wave 2). Stability
+    100 days: R = 0.998, readiness 0.968: none."""
     today = day(5)
     last = at(today, 600) - DAY_MS
     weak = FakeState(default_e=0.97, stability={"a1": 1.0}, last_ms={"a1": last})
     got = maint(weak, today)
-    assert [(i.skill_id, i.tier, i.reason) for i in got] == [("a1", 4, "forecast")]
+    assert [(i.skill_id, i.tier, i.reason) for i in got] == [
+        ("a1", 4, "forecast"),
+        ("a1", 4, "retry"),
+    ]
     strong = FakeState(default_e=0.97, stability={"a1": 100.0}, last_ms={"a1": last})
     assert maint(strong, today) == []
 
@@ -215,7 +258,7 @@ def test_an_exam_within_21_days_adds_its_date_as_a_horizon() -> None:
     near = CourseSettings(
         "c", start=D0, exams=(ExamSpec(1, today + timedelta(days=10), ("K::U1",)),)
     )
-    assert [i.reason for i in maint(state, today, settings=near)] == ["exam"]
+    assert [i.reason for i in maint(state, today, settings=near)] == ["exam", "retry"]
     far = CourseSettings(
         "c", start=D0, exams=(ExamSpec(1, today + timedelta(days=30), ("K::U1",)),)
     )
@@ -283,24 +326,27 @@ def test_minutes_follow_the_predicted_medians() -> None:
     assert all(i.expected_minutes == pytest.approx(7.0) for i in p.items)
 
 
-def test_items_that_cannot_be_interleaved_are_reported() -> None:
-    """Day 2 with a1 alone in growth (a2, a3 certified out of the way? no: only a1 has its
-    block done and a2, a3 still owe their blocks): a2, a3 blocks first, then a1's 3 growth
-    problems can be separated only by... nothing after the blocks: 1 a1 item is placed (the
-    first follows a3's block), 2 are dropped, with a note."""
+def test_items_that_cannot_be_interleaved_are_placed_side_by_side_with_a_note() -> None:
+    """Day 2, only a1 has its block done; a2 and a3 still owe their blocks: their blocks
+    first, then a1's 3 growth problems with nothing else to put between them. Wave 2: all
+    three are placed (two right after an a1 item), none dropped, and a note says so."""
     log = Log()
     blocks_done(log, "a1")
     p = plan(log, day(2))
     growth = [i for i in p.items if i.role == "growth"]
-    assert len(growth) == 1
-    assert len(p.dropped) == 2
-    assert any("left out" in n for n in p.notes)
+    assert len(growth) == 3
+    assert p.dropped == ()
+    assert p.adjacent
+    assert set(p.adjacent) == {"a1"}
+    assert any("a1:" in n and "right after one of its own" in n for n in p.notes)
 
 
 def test_after_an_execution_miss_one_more_problem_later() -> None:
-    """a1 is in maintenance and served its one maintenance problem today: a miss whose top
-    suspect (a1, blame 1.0) has memory share 0.2 < 0.5 -> one more problem later (reason
-    "retry"), among a2's and a3's growth. Memory share 0.8: none."""
+    """a1 is in maintenance and served its one maintenance problem today (its retry slot
+    was held in the first plan): a miss whose top suspect (a1, blame 1.0) has memory share
+    0.2 < 0.5 keeps the slot for one more problem later, among a2's and a3's growth; the
+    stuck ladder makes it a smaller one (tier 3, rung 1). Memory share 0.8: the slot is
+    released and nothing more comes."""
     today = day(5)
     state = FakeState(
         default_e=0.97, stability={"a1": 1.0}, last_ms={"a1": at(today, 600) - DAY_MS}
@@ -318,13 +364,16 @@ def test_after_an_execution_miss_one_more_problem_later() -> None:
         served = [ServedItem(first, correct=False, update=upd)]
         return [i for i in plan(log, today, state=state, served=served).items if i.skill_id == "a1"]
 
-    assert [i.reason for i in after(0.2)] == ["retry"]
+    assert [(i.reason, i.ladder, i.tier) for i in after(0.2)] == [("ladder:smaller", 1, 3)]
     assert after(0.8) == []
 
 
 def test_spread_blame_steers_the_next_growth_problem() -> None:
     """a2's tier-2 problems: some use a1 (the top suspect), some b1 (the runner-up). After a
-    miss with blame a1 0.5, b1 0.4, a2 0.1, a2's next growth problem has a1 and not b1."""
+    miss with blame a1 0.5, b1 0.4, a2 0.1, a2's next item is the stuck ladder's smaller
+    problem (its only tier-1 problem, which can't contain a1). With that card retired the
+    ladder finds none, the planned problem stands, and the spread-blame rule chose it: it
+    has a1 and not b1."""
     probs = [problem(f"a2.t2.{i}", "a2", 2, uses=["a1"]) for i in range(3)] + [
         problem(f"a2.t2.x{i}", "a2", 2, uses=["b1"]) for i in range(3)
     ]
@@ -342,7 +391,15 @@ def test_spread_blame_steers_the_next_growth_problem() -> None:
     served = [ServedItem(item, correct=False, update=upd)]
     state = FakeState(default_e=0.92)
     cert = Certifier.for_course(log.items, cr, SETTINGS, today=day(1))
-    p = plan_day(model, state, cert, cr, SETTINGS, day(1), at(day(1), 600), served, rng=rng())
+    args = (model, state, cert, cr, SETTINGS, day(1), at(day(1), 600), served)
+    first = next(i for i in plan_day(*args, rng=rng()).items if i.skill_id == "a2")
+    assert first.problem is not None
+    assert (first.problem.problem_id, first.reason, first.ladder) == (
+        "a2.t1.01",
+        "ladder:smaller",
+        1,
+    )
+    p = plan_day(*args, rng=rng(), retired={"a2.t1.01"})
     first = next(i for i in p.items if i.skill_id == "a2")
     assert first.problem is not None
     assert first.reason == "suspect"
@@ -374,21 +431,31 @@ def test_hours_fall_back_to_the_standard_until_ten_certifications() -> None:
     assert got.hours_to_keep_pace == pytest.approx(10.5)
 
 
-def test_hours_from_history_per_certified_milestone() -> None:
-    """a1-a3 certify M1 (day 1), M2 (day 2), M3 (day 3) and b1 M1 (day 8): 10 milestones. Each
-    attempt took 2 minutes (as recorded): a1-a3's M1 windows hold the block success and 3
-    tier-2 tries (8 min), M2 and M3 four tries each (8 min); b1's M1, 8 min. Day 16: the
-    next 7 days (17-23) hold b1's and b2's M2 deadlines (day 21, tier 3; the schedule counts
-    them whether or not they're certified) and c1's M1 (day 19, tier 2): 3 x 8 = 24 min. No
-    maintenance is due (no forgetting): 24/60 h."""
+def ten_milestones() -> Log:
+    """a1-a3 certify M1 (day 1), M2 (day 2) and M3 (day 3), each of the last two with 2
+    practice tries and a passed 2-problem sitting; b1 certifies M1 (day 8)."""
     log = Log()
     for s in ("a1", "a2", "a3"):
-        log.add(SK[s].pool[0], D0, True, role="new")
-        log.many(SK[s].pool[3], day(1), "111")
-        log.many(SK[s].pool[9], day(2), "1111", minutes=3.0)
-        log.many(SK[s].pool[15], day(3), "1111", minutes=4.0)
+        sp = SK[s].pool
+        log.add(sp[0], D0, True, role="new")
+        log.many(sp[3], day(1), "111")
+        log.many(sp[9], day(2), "11", minutes=3.0)
+        log.sitting(sp[10:12], day(2), minutes=3.0)
+        log.many(sp[15], day(3), "11", minutes=4.0)
+        log.sitting(sp[16:18], day(3), minutes=4.0)
     log.add(SK["b1"].pool[0], day(7), True, role="new")
     log.many(SK["b1"].pool[3], day(8), "111")
+    return log
+
+
+def test_hours_from_history_per_certified_milestone() -> None:
+    """Ten milestones (a1-a3's M1-M3, b1's M1). Each attempt took 2 minutes (as recorded):
+    a1-a3's M1 windows hold the block success and 3 tier-2 tries (8 min), M2 and M3 two
+    practice tries and two sitting problems each (8 min); b1's M1, 8 min. Day 16: the next
+    7 days (17-23) hold b1's and b2's M2 deadlines (day 21, tier 3; the schedule counts them
+    whether or not they're certified) and c1's M1 (day 19, tier 2): 3 x 8 = 24 min. No
+    maintenance is due (no forgetting): 24/60 h."""
+    log = ten_milestones()
     spent = {o.attempt_id: 2.0 for o in log.items}
     p = plan(log, day(16), state=FakeState(default_e=0.97), spent=spent)
     assert p.hours_basis == "history"
@@ -457,7 +524,7 @@ def test_the_next_study_day_sets_the_maintenance_horizon() -> None:
         return [i.reason for i in p.items if i.role == "maintenance"]
 
     assert maintained(None) == []
-    assert maintained(today + timedelta(days=19)) == ["forecast"]
+    assert maintained(today + timedelta(days=19)) == ["forecast", "retry"]
 
 
 def test_hours_add_the_maintenance_the_week_makes_due() -> None:
@@ -465,14 +532,7 @@ def test_hours_add_the_maintenance_the_week_makes_due() -> None:
     forgetting fast (stability 1 day, practised just now): its tier-4 readiness falls to
     0.97 x 0.9 = 0.873 < 0.9 within the week, adding one tier-4 problem (median 5.0 min):
     29/60 h."""
-    log = Log()
-    for s in ("a1", "a2", "a3"):
-        log.add(SK[s].pool[0], D0, True, role="new")
-        log.many(SK[s].pool[3], day(1), "111")
-        log.many(SK[s].pool[9], day(2), "1111", minutes=3.0)
-        log.many(SK[s].pool[15], day(3), "1111", minutes=4.0)
-    log.add(SK["b1"].pool[0], day(7), True, role="new")
-    log.many(SK["b1"].pool[3], day(8), "111")
+    log = ten_milestones()
     spent = {o.attempt_id: 2.0 for o in log.items}
     state = FakeState(default_e=0.97, stability={"a1": 1.0}, last_ms={"a1": at(day(16), 600)})
     p = plan(log, day(16), state=state, spent=spent)

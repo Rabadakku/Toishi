@@ -85,6 +85,7 @@ def test_gates_and_report(summaries: list[RunSummary]) -> None:
     ]
     by_name = {key: g for key, g in zip(names, found, strict=True)}
     daily_p1 = by_name[("Daily items never exceed the plan", "P1")]
+    assert daily_p1.passed, daily_p1.detail  # wave 2: re-plans never add items
     assert by_name[("Daily items never exceed the plan", "P0")].passed
     p1_final = all(s.final for s in summaries if s.spec.policy == "P1")
     for g in found[:4]:
@@ -111,10 +112,28 @@ def test_gates_and_report(summaries: list[RunSummary]) -> None:
         assert f"### {truth}" in text
     assert "Running P1 for real" in text
     assert "| Observed (D4) | 0.43 | 2.0 | 0.93 |" in text
-    if not daily_p1.passed:
-        # Known (backlog, 2026-11-02): with the real planner, re-planning after a miss can add
-        # items beyond the day's first plan. Fix in the wave 2 planner work, then drop this.
-        pytest.xfail(f"known planner issue: {daily_p1.detail}")
+    assert "### Certification sittings (P1)" in text
+
+
+def test_the_truth_answers_sittings_like_any_first_try() -> None:
+    """Wave 2: a strong student reaches M2 and M3 through certification sittings. Each
+    sitting problem is a recorded first try (the truth's chance and the policy's prediction
+    logged like any other); a skill-sitting passes exactly when its problems are all right
+    and their summed minutes are within their summed T*, and the planner's certifier agrees."""
+    result = run(RunSpec("toy", "a-model", "strong", 1, "P1"))
+    sat = [a for a in result.attempts if a.role == "sitting"]
+    assert sat
+    assert all(a.tier >= 3 and a.predicted is not None and 0.0 <= a.p_true <= 1.0 for a in sat)
+    assert result.sittings
+    assert sum(s.problems for s in result.sittings) == len(sat)
+    assert all(s.problems in (2, 3) for s in result.sittings)
+    passed = [s for s in result.sittings if s.passed]
+    assert passed
+    for s in passed:
+        m = "M2" if s.tier == 3 else "M3"
+        assert result.first_cert[(s.skill, m)] <= s.day
+    summary = summarize(result)
+    assert (summary.sittings, summary.sitting_passes) == (len(result.sittings), len(passed))
 
 
 def test_command_line_writes_the_report(tmp_path: Path) -> None:

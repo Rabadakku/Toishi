@@ -69,6 +69,10 @@ def test_bad_settings_and_standards_raise() -> None:
         check_settings(CourseSettings("c", accuracy_target=1.0))
     with pytest.raises(ValueError, match="target tier"):
         check_settings(CourseSettings("c", target_tier=6))
+    check_settings(CourseSettings("c", growth_band=(0.50, 0.75)))  # the owner's harder band
+    for band in ((0.75, 0.50), (0.0, 0.9), (0.7, 1.0)):
+        with pytest.raises(ValueError, match="growth band"):
+            check_settings(CourseSettings("c", growth_band=band))
     with pytest.raises(ValueError, match="aligned section"):
         section_dates(standard(), CourseSettings("c", aligned=("nope", START)))
     with pytest.raises(ValueError, match="weekly hours"):

@@ -1,4 +1,5 @@
-"""Data contract of the practice planner (docs/design/student-model.md v1.1, sections 4 and 8).
+"""Data contract of the practice planner (docs/design/student-model.md, sections 4 and 8, and
+the wave 2 additions of docs/design/wave2-planner.md section 5).
 
 Implementations may add fields but must not rename or remove these.
 """
@@ -8,8 +9,9 @@ from datetime import date
 from typing import Literal
 
 from core.learner.types import ComponentId, ProblemSpec, UpdateRecord
+from core.plan.config import GROWTH_BAND
 
-type Role = Literal["new", "growth", "maintenance", "check", "practice-test", "focused"]
+type Role = Literal["new", "growth", "maintenance", "check", "practice-test", "focused", "sitting"]
 type MilestoneName = Literal["M1", "M2", "M3", "keep"]
 type SkillState = Literal[
     "not-introduced", "new", "growth", "maintenance", "keep", "slip-limited", "struggling"
@@ -71,6 +73,9 @@ class CourseSettings:
     exams: tuple[ExamSpec, ...] = ()
     keep_target: float = 0.80
     keep_tier: int = 3
+    # Wave 2: the growth band of predicted first-try chances (the owner may choose (0.50, 0.75));
+    # an empty band takes the problem closest to its midpoint.
+    growth_band: tuple[float, float] = GROWTH_BAND
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +118,17 @@ class WorkItem:
     block: bool = False  # part of a new skill's block (example and first problems)
     p: float | None = None  # predicted first-try chance when chosen
     reason: str = ""  # why this problem: band, bottleneck, suspect, fallback, target, ...
+    # Wave 2 (docs/design/wave2-planner.md section 5):
+    ladder: int = 0  # the stuck ladder's rung: 1 a smaller problem, 2 a prerequisite's problem
+    sitting: str | None = None  # the day's certification sitting (role "sitting")
+    # A sitting item: the limit on the summed active time of its skill's sitting problems (the
+    # sum of their T*, design v1.3); shown with the elapsed time, never a cut-off.
+    time_limit: float | None = None
+    # Added by the implementation (planner-impl-notes.md, "Wave 2"). The session passes served
+    # items back as it got them (ServedItem.item), so later plans can read these:
+    ladder_for: ComponentId | None = None  # a ladder item: the stuck skill whose slot it fills
+    day_items: int | None = None  # the day's first plan's item count: later plans stay within it
+    sitting_block: tuple[str, ...] = ()  # a sitting item: the sitting's problem ids, serve order
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +156,15 @@ class DayPlan:
     statuses: tuple[SkillStatus, ...] = ()  # every course skill, in course order
     confusable: tuple[ConfusableDecision, ...] = ()  # randomized adjacency, logged (4.5)
     overflow: int = 0  # missed-milestone items past the 40% share, served after the rest
-    dropped: tuple[WorkItem, ...] = ()  # items no order could place without a same-skill pair
+    dropped: tuple[WorkItem, ...] = ()  # items no order could place at all (none so far)
+    # Wave 2 (docs/design/wave2-planner.md section 5):
+    set_aside: tuple[ComponentId, ...] = ()  # skills with 3 misses in a row today: no more today
+    sittings: tuple[tuple[str, tuple[ComponentId, ...]], ...] = ()  # sitting id and its skills
+    # Added by the implementation:
+    adjacent: tuple[ComponentId, ...] = ()  # skills placed next to themselves: nothing between
+    # The predicted chance of passing a sitting today, for each skill that met the other
+    # conditions (design v1.3's SITTING_PASS_MIN gate, logged).
+    sitting_chances: tuple[tuple[ComponentId, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

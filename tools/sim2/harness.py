@@ -14,10 +14,13 @@ The course keeps running in self-study mode after the last class (no end date, n
 Recorded: the plan and what was served each day, every attempt with the policy's prediction
 and the truth's chance, each change of milestone certification with the truth's readiness at
 that moment, the truth's readiness at each milestone deadline, readiness snapshots after the
-M3 deadline, minutes per skill and where new material was served.
+M3 deadline, minutes per skill, where new material was served, and P1's certification
+sittings (role "sitting", wave 2: the truth answers them like any first try; a skill passes
+when all its sitting problems are right and their summed minutes are within their summed T*).
 """
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Final, Literal
@@ -84,12 +87,32 @@ class AttemptRecord:
     day: int
     skill: ComponentId
     tier: int
-    role: str
+    role: str  # the item's role; "sitting" for a certification sitting (wave 2)
     correct: bool
     predicted: float | None  # the policy's chance before answering
     p_true: float  # the truth's chance
     minutes: float
     fast: bool  # minutes <= T*
+    standard: float = 0.0  # the problem's T*
+
+
+@dataclass(frozen=True, slots=True)
+class SittingRecord:
+    """One skill's part of a day's certification sitting (P1, wave 2): its problems, how
+    many were right, their summed minutes and summed T*; passed as design v1.3 judges it
+    (all right and the summed time within the summed T*)."""
+
+    day: int
+    skill: ComponentId
+    tier: int
+    problems: int
+    correct: int
+    minutes: float
+    limit: float
+
+    @property
+    def passed(self) -> bool:
+        return self.correct == self.problems and self.minutes <= self.limit + 1e-9
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,11 +146,35 @@ class RunResult:
     skill_minutes: dict[ComponentId, float] = field(default_factory=dict)
     attempts: list[AttemptRecord] = field(default_factory=list)
     days: list[DayRecord] = field(default_factory=list)
+    sittings: list[SittingRecord] = field(default_factory=list)
     tag_noise: TagNoise | None = None
     seconds: float = 0.0
 
     def deadline(self, skill: ComponentId, milestone: str) -> int:
         return self.intro[skill] + MILESTONE_DAYS[milestone]
+
+
+def day_sittings(attempts: Sequence[AttemptRecord], day: int) -> list[SittingRecord]:
+    """The skills' sittings among the day's attempts (role "sitting"; the truth answered them
+    like any first try)."""
+    found: dict[tuple[ComponentId, int], list[AttemptRecord]] = {}
+    for a in reversed(attempts):
+        if a.day != day:
+            break
+        if a.role == "sitting":
+            found.setdefault((a.skill, a.tier), []).append(a)
+    return [
+        SittingRecord(
+            day=day,
+            skill=skill,
+            tier=tier,
+            problems=len(tries),
+            correct=sum(1 for a in tries if a.correct),
+            minutes=sum(a.minutes for a in tries),
+            limit=sum(a.standard for a in tries),
+        )
+        for (skill, tier), tries in sorted(found.items())
+    ]
 
 
 def course_named(name: str) -> SimCourse:
@@ -252,6 +299,7 @@ def run(spec: RunSpec, config: RunConfig | None = None) -> RunResult:
                             p_true=p_true,
                             minutes=answer.minutes,
                             fast=answer.minutes <= shown.standard_minutes,
+                            standard=shown.standard_minutes,
                         )
                     )
                 if item.role == "new" and item.skill_id not in result.first_new:
@@ -262,6 +310,7 @@ def run(spec: RunSpec, config: RunConfig | None = None) -> RunResult:
                 served += 1
                 roles.append(item.role)
             policy.end_day(day, now)
+            result.sittings.extend(day_sittings(result.attempts, i))
             result.days.append(
                 DayRecord(
                     index=i,

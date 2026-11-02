@@ -195,6 +195,11 @@ class _PlannerModel:
         own = getattr(self.inner, "slip", None)
         return float(own(state)) if own is not None else state.params.slip
 
+    def sigma_t(self, state: StudentState) -> float:
+        """sigma_T for a sitting's pace chance (the planner's optional protocol method)."""
+        own = getattr(self.inner, "sigma_t", None)
+        return float(own(state)) if own is not None else state.params.sigma_t
+
 
 class _CorePlanner:
     """The real planner behind `PlannerLike` (see the module docstring)."""

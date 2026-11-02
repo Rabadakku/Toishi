@@ -5,14 +5,20 @@ confusable pairs, an optional exam and end date), a fake student and a history, 
 a random number of items one at a time through `next_item` with random outcomes, and checks
 the whole day (served items, then the remaining plan):
 
-- caps: at most 3 problems per skill a day (reference checks aside), at most 3 growth
-  problems per skill a day, at most 3 block problems per skill ever;
+- caps: at most 3 problems per skill a day (reference checks and sittings aside), at most 3
+  growth problems per skill a day, at most 3 block problems per skill ever;
+- re-plans never add items: the day's items (served, then planned) never exceed its first
+  plan's (wave 2);
 - new material comes before any missed-milestone work, and missed-milestone work is at most
   40% of the day up to its last item of other work;
-- never two items of one skill in a row, except inside a new skill's block;
+- never two items of one skill in a row, except inside a new skill's block or the sitting,
+  or where the plan that placed them logged a forced adjacency (nothing else to put
+  between);
+- a sitting's problems are served as one block;
 - never a card twice in the day;
 - at most one reference check per ten items and none before the 10th (and, on a plan with
-  enough skills, exactly at every 10th position, or right after a new block covering it);
+  enough skills, exactly at every 10th position, or right after the day's new material when
+  it covers that position);
 - the same seed gives the same plan, and `next_item` is the plan's first item.
 """
 
@@ -29,12 +35,12 @@ from core.learner.types import Observation, Prediction, UpdateRecord
 from core.plan.certify import Certifier, model_priors
 from core.plan.config import CHECK_EVERY, MISSED_SHARE
 from core.plan.daily import main_share, next_item, plan_day
-from core.plan.types import Course, CourseSettings, DayPlan, ExamSpec, ServedItem
+from core.plan.types import Course, CourseSettings, DayPlan, ExamSpec, ServedItem, WorkItem
 from tests.plan.fakes import FakePredictor, FakeState
 from tests.plan.helpers import Log, at, course, fake, pool, rng, skill
 
 D0 = date(2026, 9, 1)
-PLAN_ROLES = ("new", "growth", "maintenance", "check")
+PLAN_ROLES = ("new", "growth", "maintenance", "check", "sitting")
 
 
 @dataclass
@@ -140,10 +146,14 @@ def make_plan(w: World, served: Sequence[ServedItem], minute: int, seed: int) ->
     )
 
 
-def serve_some(w: World, data: st.DataObject, steps: int) -> tuple[list[ServedItem], DayPlan]:
-    """Serve up to `steps` items one at a time, re-planning after each answer."""
+def serve_some(
+    w: World, data: st.DataObject, steps: int
+) -> tuple[list[ServedItem], DayPlan, list[DayPlan]]:
+    """Serve up to `steps` items one at a time, re-planning after each answer; every plan of
+    the day comes back too."""
     served: list[ServedItem] = []
     plan = make_plan(w, served, 0, w.seed)
+    plans = [plan]
     for k in range(steps):
         if not plan.items:
             break
@@ -166,32 +176,66 @@ def serve_some(w: World, data: st.DataObject, steps: int) -> tuple[list[ServedIt
                 )
         served.append(ServedItem(item, correct=correct, update=update))
         plan = make_plan(w, served, k + 1, w.seed + k + 1)
-    return served, plan
+        plans.append(plan)
+    return served, plan, plans
 
 
-def check_day(w: World, served: Sequence[ServedItem], plan: DayPlan) -> None:
+def _same_skill_pairs(previous: WorkItem | None, items: Sequence[WorkItem]) -> int:
+    """Two items of one skill in a row, outside a new block and outside the sitting."""
+    seq = [*([previous] if previous is not None else []), *items]
+    return sum(
+        1
+        for x, y in pairwise(seq)
+        if x.skill_id == y.skill_id
+        and not (x.block and y.block)
+        and not (x.role == "sitting" and y.role == "sitting")
+    )
+
+
+def check_day(
+    w: World, served: Sequence[ServedItem], plan: DayPlan, plans: Sequence[DayPlan] = ()
+) -> None:
     done = [x.item for x in served if x.item.role in PLAN_ROLES]
     day = [*done, *plan.items]
 
-    # Caps.
-    problems = Counter(i.skill_id for i in day if i.problem is not None and i.role != "check")
+    # Caps (a ladder item filling another skill's slot counts for that skill's block).
+    problems = Counter(
+        i.skill_id for i in day if i.problem is not None and i.role not in ("check", "sitting")
+    )
     assert all(n <= 3 for n in problems.values()), problems
     growth = Counter(i.skill_id for i in day if i.role == "growth")
     assert all(n <= 3 for n in growth.values()), growth
     past_new = Counter(
         o.problem.main_skill for o in w.log.items if o.role == "new" and o.study_day < w.today
     )
-    block = Counter(i.skill_id for i in day if i.role == "new" and i.problem is not None)
+    block = Counter(
+        i.ladder_for or i.skill_id for i in day if i.role == "new" and i.problem is not None
+    )
     assert all(past_new[s] + n <= 3 for s, n in block.items()), (past_new, block)
+
+    # Re-plans never add items: every plan keeps the day within the first plan's size.
+    if plans:
+        first = len(plans[0].items)
+        for k, p in enumerate(plans):
+            assert k + len(p.items) <= first, (k, len(p.items), first)
+            assert all(i.day_items == first for i in p.items)
 
     # New material before missed-milestone work; the 40% share up to the last other item.
     first_missed = next((k for k, i in enumerate(day) if i.missed), len(day))
     assert all(i.role != "new" for i in day[first_missed:])
     assert main_share(done, plan.items) <= MISSED_SHARE + 1e-9
 
-    # Never two of one skill in a row outside a new block.
-    for x, y in pairwise(day):
-        assert x.skill_id != y.skill_id or (x.block and y.block), (x, y)
+    # Never two of one skill in a row outside a new block or the sitting, except where the
+    # plan that placed them had nothing else to put between (logged: DayPlan.adjacent).
+    for k, p in enumerate(plans):
+        previous = served[k - 1].item if k > 0 else None
+        assert _same_skill_pairs(previous, p.items) <= len(p.adjacent), (k, p.adjacent)
+    if not plans:
+        assert _same_skill_pairs(None, day) <= len(plan.adjacent)
+
+    # A sitting is one block.
+    sat = [k for k, i in enumerate(day) if i.role == "sitting"]
+    assert sat == list(range(sat[0], sat[0] + len(sat))) if sat else True
 
     # Never a card twice in the day.
     cards = [i.problem.card_id if i.problem else i.example_card for i in day]
@@ -212,8 +256,8 @@ def check_day(w: World, served: Sequence[ServedItem], plan: DayPlan) -> None:
 )
 @given(w=worlds(), data=st.data(), steps=st.integers(0, 12))
 def test_day_invariants(w: World, data: st.DataObject, steps: int) -> None:
-    served, plan = serve_some(w, data, steps)
-    check_day(w, served, plan)
+    served, plan, plans = serve_some(w, data, steps)
+    check_day(w, served, plan, plans)
 
 
 @settings(
@@ -255,8 +299,9 @@ def wide_days(draw: st.DrawFn) -> tuple[Course, int, int, int]:
 )
 @given(day=wide_days())
 def test_a_reference_check_every_tenth_item(day: tuple[Course, int, int, int]) -> None:
-    """With enough skills to choose from, the check is exactly the 10th, 20th, ... item, or
-    the item right after a new block that covers that position."""
+    """With enough skills to choose from, the check is exactly the 10th, 20th, ... item, or,
+    when the day's new material covers that position, the first item after it (when that is
+    still in the same ten): no check comes between two new blocks (gate 6.2)."""
     cr, n_old, _, seed = day
     log = Log()
     for sk in cr.skills[:n_old]:
@@ -268,18 +313,14 @@ def test_a_reference_check_every_tenth_item(day: tuple[Course, int, int, int]) -
     plan = plan_day(model, FakeState(), cert, cr, s, today, at(today), rng=rng(seed))
     items = list(plan.items)
     assert plan.dropped == ()
+    new_end = max((k for k, it in enumerate(items) if it.block), default=-1) + 1
+    assert all(it.block for it in items[:new_end])
     for slot in range(CHECK_EVERY, len(items) + 1, CHECK_EVERY):
         it = items[slot - 1]
         if it.role == "check":
             continue
-        # Otherwise the slot falls inside a new block, after its first item ...
-        before = items[slot - 2]
-        assert it.block, (slot, [i.role for i in items])
-        assert before.block, (slot, [i.role for i in items])
-        assert before.skill_id == it.skill_id, (slot, [i.skill_id for i in items])
-        # ... and the check comes right after that block (unless the day ends with it).
-        end = slot - 1
-        while end < len(items) and items[end].block and items[end].skill_id == it.skill_id:
-            end += 1
-        if end < len(items):
-            assert items[end].role == "check", (slot, [i.role for i in items])
+        # Otherwise the slot falls inside the day's new material ...
+        assert slot <= new_end, (slot, [i.role for i in items])
+        # ... and the check comes right after it when that position is in the same ten.
+        if new_end < len(items) and (new_end + 1) // CHECK_EVERY == slot // CHECK_EVERY:
+            assert items[new_end].role == "check", (slot, [i.role for i in items])

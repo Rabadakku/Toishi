@@ -7,6 +7,11 @@ median time) and for two facts: whether a component is a course or a background 
 (the slip-limited status, 4.2, and the feasibility check, 4.3).
 
 `core.learner.StudentModel` satisfies this protocol; tests use a deterministic fake.
+
+Optional (wave 2): `sigma_t(state) -> float`, the spread of the student's log solve times
+(design 3.3's sigma_T), for a sitting's chance of finishing within its time. A model without
+it gets design 3.5's prior 0.45 (`core.plan.sitting.sigma_of`); the protocol's required
+methods are unchanged.
 """
 
 from collections.abc import Callable

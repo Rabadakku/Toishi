@@ -9,7 +9,16 @@ from datetime import date
 
 type ComponentId = str
 
-ROLES = ("new", "growth", "maintenance", "check", "practice-test", "focused", "placement")
+ROLES = (
+    "new",
+    "growth",
+    "maintenance",
+    "check",
+    "practice-test",
+    "focused",
+    "placement",
+    "sitting",
+)
 
 
 @dataclass(frozen=True, slots=True)

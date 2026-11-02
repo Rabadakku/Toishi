@@ -9,12 +9,17 @@ import pytest
 from core.learner.types import Prediction, ProblemSpec, UpdateRecord
 from core.plan.select import (
     Seen,
+    band_midpoint,
     choose,
     choose_check,
     choose_growth,
+    choose_growth_in,
     choose_maintenance,
     choose_new,
+    choose_prerequisite,
     choose_problem,
+    choose_return,
+    choose_sitting,
     is_template_instance,
     suspects,
 )
@@ -88,6 +93,26 @@ def test_empty_band_falls_back_to_the_problem_closest_to_080() -> None:
     got = choose_growth(sk, 3, predict_from({"a": 0.95, "b": 0.60, "c": 0.66}), seen())
     assert got is not None
     assert (got.problem.problem_id, got.reason) == ("c", "fallback")
+
+
+def test_the_owners_harder_band_and_its_midpoint_fallback() -> None:
+    """Wave 2 section 3: with the band (0.50, 0.75), a (0.85) and c (0.40) are out and b
+    (0.70) in; with no problem inside it, the fallback is the problem closest to its
+    midpoint 0.625 (c at 0.45), where the default band takes a."""
+    probs = [problem("a", "s", 3), problem("b", "s", 3), problem("c", "s", 3)]
+    sk = skill("s", "C::U::A", 1, problems=probs)
+    pred = predict_from({"a": 0.85, "b": 0.70, "c": 0.40})
+    got = choose_growth_in((0.50, 0.75), sk, 3, pred, seen())
+    assert got is not None
+    assert (got.problem.problem_id, got.reason) == ("b", "band")
+    out = predict_from({"a": 0.85, "b": 0.95, "c": 0.45})
+    got = choose_growth_in((0.50, 0.75), sk, 3, out, seen())
+    assert got is not None
+    assert (got.problem.problem_id, got.reason) == ("c", "fallback")  # |0.45 - 0.625| < 0.225
+    got = choose_growth(sk, 3, out, seen())
+    assert got is not None
+    assert got.problem.problem_id == "a"  # inside the default band [0.70, 0.90]
+    assert band_midpoint((0.50, 0.75)) == pytest.approx(0.625)
 
 
 def test_spread_blame_prefers_the_top_suspect_without_the_runner_up() -> None:
@@ -229,3 +254,65 @@ def test_choose_dispatches_and_rejects_roles_it_does_not_plan() -> None:
         choose("check", sk, 3, pred, seen())
     with pytest.raises(ValueError, match="no problems for role"):
         choose("focused", sk, 3, pred, seen())
+
+
+def test_the_prerequisite_problem_is_tier_1_2_never_served_first() -> None:
+    """Rung 2: p's tier 1-2 problems; t2.01 was served, so t1.01 and t2.02 remain, both
+    unseen: the one closest to the band's midpoint (0.80): t2.02 at 0.78. Tier 3 never."""
+    probs = [problem(f"p.{n}", "p", t) for n, t in (("t1.01", 1), ("t2.01", 2), ("t2.02", 2))]
+    sk = skill("p", "C::U::A", 1, problems=[*probs, problem("p.t3.01", "p", 3)])
+    log = Log()
+    log.add(probs[1], TODAY - timedelta(days=1), True)
+    pred = predict_from({"p.t1.01": 0.95, "p.t2.01": 0.8, "p.t2.02": 0.78, "p.t3.01": 0.8})
+    got = choose_prerequisite(sk, pred, seen(log))
+    assert got is not None
+    assert (got.problem.problem_id, got.reason) == ("p.t2.02", "ladder:prerequisite")
+
+
+def test_the_return_problem_is_from_a_family_not_served_in_seven_days() -> None:
+    """The tier-3 families f1 (served 3 days ago) and f2 (served 9 days ago), and f3 unseen:
+    f1 is out; f2 and f3 qualify, and their problems were never served, so the lower id
+    wins (s.t3.f2). With f2 and f3 also served within the week, none qualifies."""
+    probs = [problem(f"s.t3.{f}", "s", 3, family=f) for f in ("f1", "f2", "f3")]
+    sk = skill("s", "C::U::A", 1, problems=probs)
+    log = Log()
+    log.add(problem("s.t3.f1b", "s", 3, family="f1"), TODAY - timedelta(days=3), False)
+    log.add(problem("s.t3.f2b", "s", 3, family="f2"), TODAY - timedelta(days=9), False)
+    pred = predict_from({p.problem_id: 0.8 for p in probs})
+    got = choose_return(sk, 3, pred, seen(log), days=7)
+    assert got is not None
+    assert (got.problem.problem_id, got.reason) == ("s.t3.f2", "return")
+    log.add(probs[1], TODAY - timedelta(days=2), False)
+    log.add(probs[2], TODAY - timedelta(days=1), False)
+    assert choose_return(sk, 3, pred, seen(log), days=7) is None
+
+
+def test_sitting_problems_are_unseen_from_different_families_and_uniform() -> None:
+    """Four families with unseen tier-3 problems: 3 problems from 3 different families, all
+    unseen; over 3,000 draws every unseen problem comes up. With one unseen family the pool
+    is thin: unseen first, then the least recently served, one per family. Fewer than 2
+    usable problems: no sitting."""
+    probs = [problem(f"s.{f}.{k}", "s", 3, family=f) for f in "wxyz" for k in (1, 2)]
+    sk = skill("s", "C::U::A", 1, problems=probs)
+    log = Log()
+    log.add(probs[0], TODAY - timedelta(days=5), True)  # w.1 seen
+    gen = rng(5)
+    counts: Counter[str] = Counter()
+    for _ in range(3000):
+        pick = choose_sitting(sk, 3, seen(log), gen)
+        assert pick is not None
+        assert not pick.thin
+        assert len(pick.problems) == 3
+        assert len({p.family for p in pick.problems}) == 3
+        assert "s.w.1" not in {p.problem_id for p in pick.problems}
+        counts.update(p.problem_id for p in pick.problems)
+    assert set(counts) == {p.problem_id for p in probs[1:]}
+    thin_log = Log()
+    for k, p in enumerate(probs[:6]):  # w, x and y seen, oldest first; z unseen
+        thin_log.add(p, TODAY - timedelta(days=10 - k), True)
+    pick = choose_sitting(sk, 3, seen(thin_log), rng(1))
+    assert pick is not None
+    assert pick.thin
+    assert [p.problem_id for p in pick.problems] == ["s.z.1", "s.w.1"]
+    lone = skill("s", "C::U::A", 1, problems=probs[:1])
+    assert choose_sitting(lone, 3, seen(), rng(1)) is None

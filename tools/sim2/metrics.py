@@ -82,6 +82,8 @@ class RunSummary:
     study_days: int
     seconds: float
     extra: dict[str, float] = field(default_factory=dict)
+    sittings: int = 0  # skill-sittings (P1, wave 2): one skill's part of one day's sitting
+    sitting_passes: int = 0
 
 
 def calibration(pairs: Iterable[tuple[float, bool]]) -> Calibration | None:
@@ -224,6 +226,8 @@ def summarize(result: RunResult) -> RunSummary:
         total_minutes=sum(d.served_minutes for d in studied),
         study_days=len(studied),
         seconds=result.seconds,
+        sittings=len(result.sittings),
+        sitting_passes=sum(1 for s in result.sittings if s.passed),
     )
 
 

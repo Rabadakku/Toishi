@@ -4,6 +4,8 @@
 - Where the spec leaves room, the planner takes the reading closest to its intent. Each choice is
   listed here with the reason. Items marked **(owner)** change behaviour the owner will see, so
   the coordinator should confirm them.
+- The "Wave 2" section at the end (`docs/design/wave2-planner.md`, design v1.3) supersedes some
+  of the wave 1 choices below; each one is marked *(wave 2: ...)*.
 
 ## Interfaces
 
@@ -68,7 +70,8 @@
 - **Age** is counted in study days.
 - **Timed rule.** A correct first try without a valid time is left out of the timed posterior.
   It shows neither success nor failure at pace, and counting it as a miss would punish the
-  timer. An aided first try is a failure.
+  timer. An aided first try is a failure. *(Wave 2: posteriors are accuracy only; pace is the
+  sitting's.)*
 - **Prior.** p is the mean calibrated prediction over the representative problems: at most 10,
   the lowest problem IDs in string order, retired cards left out. It is taken at query time.
   - The same p serves the whole hysteresis replay, because no historical priors are stored.
@@ -87,7 +90,8 @@
     and uncertified*. Judged means it has n_eff at its threshold, or was certified before.
   - Untested tiers neither count nor block. A failed lower tier still blocks, which is the
     critique 17 concern.
-  - Tiers 3 and up use the M2/M3 rule (timed, n_eff 4).
+  - Tiers 3 and up use the M2/M3 rule (timed, n_eff 4). *(Wave 2: the M2/M3 rule certifies
+    only through a sitting; n_eff 4 still marks a tier as judged.)*
 
 ## Statuses (4.2)
 
@@ -136,7 +140,7 @@
     at the same point repeats.
   - A miss can still add an item: the 4.6 retry, or a revoked certification turning maintenance
     into growth. Gate 6.2's "daily items never exceed the reported plan" holds against the latest
-    plan.
+    plan. *(Wave 2: re-plans never add items; the gate holds against the first plan.)*
 - **Caps.**
   - The 3-a-day per-skill cap counts new, growth and maintenance problems. Examples and
     reference checks are left out; see the checks bullet.
@@ -155,7 +159,7 @@
     3.2/5 = 0.64 < 0.70, and the skill goes back to growth at the Keep tier.
 - **4.6 retry.** When the skill's latest first try today was a miss and its top suspect's memory
   share is below 0.5, one more problem follows later, if the skill has room and nothing else
-  planned. It uses the skill's current role.
+  planned. It uses the skill's current role. *(Wave 2: its slot is held from the first plan.)*
 - **Reference checks.**
   - They are exempt from the per-skill cap. Excluding capped skills would bias the uniform draw
     toward skills that are going well (their growth stopped early).
@@ -165,7 +169,7 @@
   - Positions count the day's plan items. Each ten gets at most one check: at its 10th
     position, or at the next boundary when a new block covers it (a block is never split), or
     when the check's skill would sit next to its own skill. A missed ten is not made up.
-    Nothing ends on a check.
+    Nothing ends on a check. *(Wave 2: no check until the day's new material is done.)*
 - **Missed-milestone share (owner).** In simulation, the literal "at most 40% of the day's items"
   starved catch-up: a student behind once no new sections remained got nothing for weeks, since
   40% of no other work is none.
@@ -182,7 +186,7 @@
     when no valid order exists.
   - **(owner)** With one skill in play (early in a course, or one growing skill left), it gets
     one problem a day. The alternative is to relax the rule when nothing else can go next, as
-    the old queue did.
+    the old queue did. *(Wave 2: that alternative, as the spec's 4 Fixes asks.)*
 - **Minutes** are the sum of predicted medians. A worked example counts 2 minutes, the earlier
   queue's estimate.
 - **Hours to keep pace.** They come from the history once 10 milestones (M1-M3) have been
@@ -225,3 +229,195 @@
   twice; the check rule; seed determinism; milestone monotonicity.
 - One scenario per status, on a deterministic fake predictor (`tests/plan/fakes.py`).
 - A purity guard: no storage, clock or I/O imports in `core/plan`.
+
+## Wave 2
+
+Spec: `docs/design/wave2-planner.md`, with the coordinator's design v1.3 correction (pace is
+the sitting's block time; posteriors are accuracy only), the corrected struggling rule (it
+stays as status.py builds it) and the gate-1 fix (new material first, no checks in between).
+Tests: `tests/plan/test_ladder.py`, `test_sitting.py`, and additions to the other files.
+
+### Interfaces
+
+- No public function changed its signature: `plan_day`, `next_item`, `status(es)`, `order`,
+  `choose_problem`, the `Certifier` methods, `intro_dates`, `milestones` take the same
+  arguments. Types only gained fields with defaults.
+- New fields beyond the spec's:
+  - `WorkItem.ladder_for`: the stuck skill whose slot a ladder item fills (see the first spec
+    problem below);
+  - `WorkItem.day_items`: the day's first plan's size, stamped on every item;
+  - `WorkItem.sitting_block`: the sitting's problem ids in serve order, on sitting items;
+  - `DayPlan.adjacent`: the skills placed next to their own skill (the 4 Fixes);
+  - `DayPlan.sitting_chances`: the logged pass chance of every skill that met the other
+    sitting conditions (v1.3: "grade C, logged").
+- **What the session must keep:** `plan_day` is stateless, so the day's frame rides on the
+  served items. Pass each served item's `WorkItem` back exactly as the planner returned it (after
+  a restart, rebuild it with `day_items`, `ladder_for`, `sitting` and `sitting_block`).
+  Without them the planner degrades rather than breaks: no `day_items` means no cap (the
+  structural rules below still hold), and a sitting item without its block is treated as a
+  finished sitting.
+- New helpers: `core.plan.ladder` (streaks, blame, the return rule), `core.plan.sitting` (the
+  pace and pass chances, a sitting under way, the practice and wait rules), `select`'s
+  `choose_growth_in` (the course's band), `choose_smaller`, `choose_prerequisite`,
+  `choose_return`, `choose_sitting`, `order.arrange` (`order` with the sitting),
+  `certify.SittingResult`, `sitting_outcome`, `sitting_results` and `Certifier.sittings`.
+- `Predictor` gains an **optional** `sigma_t(state)`; without it the sitting's pace chance uses
+  design 3.5's prior 0.45. The adapters' `_PlannerModel` reads `state.params.sigma_t`.
+
+### Re-plans never add items (sections 1 and 4)
+
+- **The day's cap.** The first plan (nothing served yet) stamps its size on every item. A later
+  plan reads the stamp from the served items and keeps served + planned within it, leaving out
+  the overflow's last items first, then the mixed set's last (the last round of the
+  round-robin), then the last-batched skill of a sitting not yet started; new blocks and a
+  sitting under way always fit, because they only shrink after the first plan.
+  - Why a cap and not only the spec's "reserve every slot": the planner is stateless, and what
+    falls due moves during the day (the maintenance forecast is taken at the current time of
+    day, the model updates after every answer, a reference check becomes possible once a block
+    ends). Structural reservations alone can't promise the gate; the stamp can.
+- **Structural reservations** keep the cap from binding: new blocks and growth at full size (as
+  before), and the 4.6 retry **held** as a second maintenance slot (reason "retry"). A re-plan
+  keeps that slot only after an execution miss (m < 0.5), and the ladder then fills it; any
+  other outcome releases it. The cost: the first plan lists up to two problems per due skill.
+- **A skill's slots follow its first role of the day:** a skill whose first item today was
+  maintenance keeps to its retry slot, even when the miss revoked its certification (it used to
+  gain two growth items); a skill that practised today in another role gets no maintenance item
+  that day.
+- Retries after a reference-check miss are no longer added: a check's slot can't be reserved
+  without reserving a retry for every check.
+- The cap counts plan items only (Focused Practice and practice tests stay outside the plan).
+
+### The stuck ladder (section 1)
+
+- **Streak**: today's first tries over the skill's items, any role (practice, reference checks,
+  sittings, and items outside the plan), a `ServedItem` with `correct` not None; a success
+  resets it; reaching 3 sets the skill aside for the rest of the day, even if a later success
+  would reset the count. A rung-2 item counts for the stuck skill (`ladder_for`) and for the
+  prerequisite (its own `skill_id`).
+- **Where a ladder item goes:** in place of the skill's next planned problem (in its new block,
+  or first in its lane), keeping that slot's role, block flag, missed flag, priority and
+  milestone. Sitting problems and reference checks are never replaced. A skill with nothing
+  planned gets nothing (the ladder never adds).
+- **Rung 1**, a smaller problem: from the skill's own pool, one tier below the last miss's
+  tier (at least tier 1), containing k* when any problem there does (else the skill's other
+  problems at that tier, else the tiers below); never served first, then the least recently
+  served, then a different form from the previous problem, then closest to the band's
+  midpoint. k*: the largest blame of the last miss; ties go to the skill itself, then the
+  lowest id; a miss without an `UpdateRecord` blames the skill. If nothing qualifies the
+  planned problem stands.
+- **Rung 2**, a prerequisite: the component with the largest blame summed over the last two
+  misses, other than the skill (ties: course order, then id). "No pool" is read as "no tier
+  1-2 problem left for it today", and a prerequisite still in its own new block is skipped
+  (its block covers it). Then the skill's requires in course order; then a smaller problem
+  again (`ladder=2`, reason `ladder:smaller`). Choice: tier 1-2, never served first, then the
+  least recently served, then closest to the band's midpoint. The item counts toward the
+  prerequisite's 3-a-day cap; when the prerequisite is full, it takes the place of the
+  prerequisite's last planned practice problem.
+- **Rung 3**, set aside: everything of the skill or in its slots leaves today's plan, reference
+  checks and its part of a sitting included. The note reads "s: set aside for today after 3
+  misses in a row. Textbook: <deck>."
+- **The return** ("the next study day with a problem from a family not served in the last 7
+  days, at the tier where it was failing"): on the first study day after one whose own first
+  tries ended with two or more misses in a row, the skill's first problem is at the tier of
+  the first miss of that run, from a family with no first try in the last 7 study days (never
+  served first, then the least recently served). When every family there was served that
+  recently, the normal choice stands. See the second spec problem for why two misses.
+- **Interactions:** the spread-blame rule (4.4) still chooses the skill's planned problem, but
+  after a miss the ladder replaces it, so the rule now decides only when the ladder finds no
+  smaller problem. The struggling rule stays as status.py builds it (coordinator).
+
+### Certification sittings (section 2, design v1.3)
+
+- **Certifier.** Posteriors are accuracy only at every tier (`first_try_success` ignores time;
+  its `timed` keyword is kept and does nothing). The M2/M3 rule keeps the name `timed` in the
+  certifier's signatures and now means: certified only on the day of a passed sitting, and
+  n_eff 4 to count as judged (level, slip-limited). A pass whose posterior is already below
+  target - 0.10 does not certify (it would be revoked at once); revocation is unchanged.
+- **Pass, fail, void**, per skill and study day (its role "sitting" first tries at the tier):
+  pass when all are right, unaided, and their summed valid time is within their summed T*;
+  fail on a wrong or aided answer or a slow block; void when all are right but a time is
+  unknown, or fewer than 2 were answered (an interrupted sitting). A void sitting needs no wait.
+- **When:** the current milestone is M2 or M3 (not Keep); readiness at its tier (the model's,
+  now) at least the target; 2 or more practice first tries at that tier and the latest (by time)
+  right; no failed sitting on either of the 2 days before today (calendar days, as everywhere
+  in the planner); not set aside; no sitting yet today. Practice is every first try at the tier
+  except a passed sitting's: a failed or void sitting's problems count (the spec), so after a
+  failed sitting a practice success comes before the next one.
+- **Pass chance** (v1.3): drawn problems first, then P_pass = (product of their calibrated P)
+  x the Fenton-Wilkinson P(summed times <= summed T*) from their predicted medians and
+  sigma_T. Below `SITTING_PASS_MIN` the skill keeps growing and the plan has one note for it,
+  "not yet at pace" with the accuracy and time parts (one per skill per plan; plans are
+  recomputed after every answer, so the session should show the latest).
+- **What:** among the skill's problems at the tier that were never served (any role, today
+  included), families are drawn uniformly, then a problem in each: 3 when 3 families exist, else
+  2. With fewer than 2 such families the least recently served problems stand in, one per family
+  while families last, with the thin-pool note. Fewer than 2 problems left: no sitting, and a
+  note. The sitting's problems are chosen before any practice, so practice never takes them.
+- **Batch:** due skills by deadline, then course order, until 3 are chosen; the block is shuffled
+  across skills (rng), so two problems of one skill may be neighbours inside it.
+- **Warm-up:** "never in the first 20 minutes of a session's expected time" is read on the study
+  day (the planner doesn't see sessions): the block starts at the first boundary after the new
+  material where the served minutes (as recorded, else expected) plus the planned expected
+  minutes reach 20. On a shorter day it comes after the whole mixed set, before the
+  missed-milestone overflow: read literally, the rule would rule out sittings for every
+  student whose day is short (a strong student's is), and gate 1 needs those.
+- **Serving:** once a sitting item is served, every later plan starts with the rest of the block
+  in its order (`sitting_block`), whatever came due meanwhile. Its first problem is rotated to
+  avoid the last item's skill when it has another; checks wait for its end like new blocks.
+- **Fields:** `sitting` = `sitting:<course>:<day>`; `time_limit` = the item's skill's limit,
+  the sum of T* over its sitting problems (v1.3: the pass is judged per skill against that sum;
+  the session can sum the skills' limits for one clock); `milestone` = the milestone of that
+  tier. Sitting problems are outside the 3-a-day cap and the growth allowance, inside the day's
+  positions and its cap.
+
+### The harder growth band (section 3)
+
+- `CourseSettings.growth_band`, validated `0 < low < high < 1`. `choose_growth` keeps its
+  signature (and the default band); the planner calls `choose_growth_in(band, ...)`. The empty
+  band's fallback is the band's midpoint, which is 0.80 for the default. The ladder's choices
+  use the same midpoint as a late tiebreak.
+
+### Order (section 4) and gate 1 (coordinator)
+
+- **Forced adjacency.** A unit that can only follow its own skill is placed there, logged in
+  `DayPlan.adjacent` and in a note; `DayPlan.dropped` stays empty (the order no longer drops).
+- **Gate 1, "new material is always served on its date".** A calc1-ch4 run (a-model, typical,
+  seed 1) on the wave 1 planner had 8 violations, every one a day whose roles read like
+  `nnnnnnnnncnnnnn`: a reference check placed between two new blocks (when the 10th position
+  fell at a block boundary), after which the 60-minute budget ran out before the later blocks.
+  The check made the day "other work served", which is the violation. Fix: no check until the
+  day's new material is done; the decade's check then comes at the first position after it, if
+  still in that ten. New material is never deferred: the plan has no budget, every new block is
+  planned first and whole, and a day whose new blocks alone fill the budget remains the gate's
+  "budget-limited" count, not a violation. The same run had 1 day over its plan (13 served, 12
+  planned: a check that became possible once a block ended), which the day's cap now prevents.
+
+### Spec problems found (implemented the closest sound version)
+
+1. **The streak can't reach 3 under its own definition.** "Counted over the skill's own items:
+   items whose skill_id is the skill" and rung 2's "skill_id is the prerequisite" together mean
+   the rung-2 outcome never counts for the stuck skill. Its streak then stays at 2, every later
+   slot becomes another prerequisite problem, and rung 3 is unreachable for a skill with the
+   usual 3 slots (miss, smaller miss, prerequisite). Fix: `WorkItem.ladder_for`; the rung-2
+   item fills the stuck skill's slot and its outcome is that skill's next step.
+2. **The return can't see the rung-2 item.** Observations carry the problem (the
+   prerequisite's) and the role, not `ladder_for`, so the next day can't tell a set-aside from
+   two misses followed by a right prerequisite problem. The return therefore triggers on a day
+   that ended with two or more of the skill's own misses in a row (every set-aside day does).
+3. **"Never in the first 20 minutes"** is read as "after up to 20 minutes" (see the warm-up).
+4. **The v1.3 example numbers.** The specified Fenton-Wilkinson formula gives 0.722 for 3
+   problems at a median of 0.8 T* with sigma 0.45 and 0.404 at a median of T* (a Monte Carlo of
+   the exact sum agrees: 0.724 and 0.405), not "about 0.68" and "about 0.36". The tests pin the
+   formula's values.
+5. **The pass-chance gate sets a stricter pace bar than pace_ok.** A student exactly at the
+   design's pace (median = T*) has a time chance of 0.40 on 3 problems (0.44 on 2), so with
+   any accuracy below 1 its pass chance is under 0.5 and it never sits. With accuracy 0.97 per
+   problem the gate needs a median of about 0.91 T* on 3 problems (0.93 T* on 2). That may be
+   intended (an exam is a block), but it is not "median <= T*".
+6. **The struggling rule and the ladder.** Struggling needs 3 days with 3 growth first tries
+   of the skill's own; on a stuck day the third slot is usually the prerequisite's problem, so
+   those days count 2 and the rule rarely fires for the skills the ladder is helping.
+7. **The simulator's "ready at pace"** (truth readiness x P(T <= T*) per problem, in
+   `tools/sim2/harness.py`) is the per-problem product v1.3 calls wrong. It feeds the report's
+   ready and false-certification columns (and gate 4 through false certifications); I left the
+   simulator's definition alone for the coordinator to decide.

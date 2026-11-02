@@ -50,6 +50,9 @@ def check_settings(settings: CourseSettings) -> None:
     for name, tier in (("target tier", settings.target_tier), ("keep tier", settings.keep_tier)):
         if not 1 <= tier <= 5:
             raise ValueError(f"{name} {tier} must be 1 to 5")
+    lo, hi = settings.growth_band
+    if not 0.0 < lo < hi < 1.0:
+        raise ValueError(f"growth band {settings.growth_band} must satisfy 0 < low < high < 1")
 
 
 def _days(hours: float, rate: float) -> int:

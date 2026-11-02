@@ -172,3 +172,16 @@ class Log:
         """One observation per character: '1' a success, '0' a miss."""
         for ch in outcomes:
             self.add(p, day, ch == "1", minutes=minutes, role=role)
+
+    def sitting(
+        self,
+        problems: Sequence[ProblemSpec],
+        day: date,
+        outcomes: str | None = None,
+        *,
+        minutes: float | None = 1.0,
+    ) -> None:
+        """One skill's sitting: a role "sitting" first try per problem ('1' right, taking
+        `minutes`; '0' wrong). All right and in time by default: a pass."""
+        for p, ch in zip(problems, outcomes or "1" * len(problems), strict=True):
+            self.add(p, day, ch == "1", minutes=minutes, role="sitting")

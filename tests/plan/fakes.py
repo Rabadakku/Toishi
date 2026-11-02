@@ -7,7 +7,8 @@ It follows the shape of design 3.2 with numbers a test can set directly:
 - memory: R_k = 0.9 ** (days since `last_ms[k]` / `stability[k]`) for a course component
   with a stability, else 1 (background components and components never reviewed);
 - q_k = e_k * R_k, P_raw = (1 - slip) * prod q_k, P = P_raw (no recalibration);
-- median minutes = standard minutes * `speed`; pace_ok = median <= standard.
+- median minutes = standard minutes * `speed`; pace_ok = median <= standard;
+- sigma_t (the spread of log solve times, for a sitting's pace chance): `sigma`.
 """
 
 import copy
@@ -31,6 +32,7 @@ class FakeState:
     slip: float = 0.0
     speed: float = 1.0
     speed_skill: dict[ComponentId, float] = field(default_factory=dict)
+    sigma: float = 0.45
 
 
 class FakePredictor:
@@ -45,6 +47,9 @@ class FakePredictor:
 
     def slip(self, state: FakeState) -> float:
         return state.slip
+
+    def sigma_t(self, state: FakeState) -> float:
+        return state.sigma
 
     def copy(self, state: FakeState) -> FakeState:
         return copy.deepcopy(state)

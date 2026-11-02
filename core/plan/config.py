@@ -1,5 +1,6 @@
-"""Planner constants (docs/design/student-model.md v1.1, section 7, and the rules of sections
-3.7, 3.8 and 4). Grades as in the design: B = indirect evidence, C = a design assumption.
+"""Planner constants (docs/design/student-model.md, section 7, and the rules of sections 3.7,
+3.8 and 4; the wave 2 additions of docs/design/wave2-planner.md). Grades as in the design:
+B = indirect evidence, C = a design assumption.
 
 Constants marked "impl" are not in the design; docs/design/planner-impl-notes.md says why each
 was chosen.
@@ -53,8 +54,8 @@ OUTSIDE_HOURS_PER_CLASS_HOUR = 2.0  # 34 CFR 600.2: the stand-in when the pack g
 EXAMPLE_MINUTES = 2.0  # impl: a worked example, as the earlier queue estimated it (EXAMPLE_MS)
 
 # Choosing the problem (4.4). C.
-GROWTH_BAND = (0.70, 0.90)
-GROWTH_FALLBACK_P = 0.80  # empty band: the problem closest to this
+GROWTH_BAND = (0.70, 0.90)  # CourseSettings.growth_band's default (owner option: 0.50-0.75)
+GROWTH_FALLBACK_P = 0.80  # the default band's midpoint: an empty band takes the closest problem
 SPREAD_BLAME = 0.7  # spread blame: the top suspect's blame is below this
 REPEAT_DAYS = 90  # no repeat within 90 days when the pool allows
 TEMPLATE_REPEAT_DAYS = 180  # a template's parameter set (its instance) not within 180 days
@@ -69,4 +70,27 @@ PRIORITY_MISSED = 2
 
 # Roles that belong to the daily plan (Focused Practice, practice tests and placement are
 # outside it: they neither count toward its caps nor toward its every-10th positions).
-PLAN_ROLES = frozenset({"new", "growth", "maintenance", "check"})
+PLAN_ROLES = frozenset({"new", "growth", "maintenance", "check", "sitting"})
+# Plan roles that are not the skill's practice: outside the 3-a-day cap and the growth allowance
+# (a reference check's draw stays uniform; a sitting is certification, not practice: impl).
+UNCAPPED_ROLES = frozenset({"check", "sitting"})
+
+# The stuck ladder (wave 2, section 1): the skill's next item today by its streak of misses.
+LADDER_SMALLER = 1  # a problem one tier lower on the most-blamed component
+LADDER_PREREQUISITE = 2  # a tier 1-2 problem of the most-blamed prerequisite
+LADDER_SET_ASIDE = 3  # no more items of the skill today
+LADDER_PREREQUISITE_TIERS = (1, 2)
+RETURN_FAMILY_DAYS = 7  # a set-aside skill returns with a family not served in the last 7 days
+
+# Certification sittings for M2 and M3 (wave 2, section 2; design v1.3). C unless noted.
+SITTING_MILESTONES = frozenset({"M2", "M3"})
+SITTING_MAX_SKILLS = 3  # one sitting a day, at most 3 skills, earliest deadline first
+SITTING_PROBLEMS = 2  # unseen problems per skill at the milestone tier, different families ...
+SITTING_PROBLEMS_MAX = 3  # ... 3 when the skill's pool allows
+SITTING_PRACTICE = 2  # practice first tries at the tier first, the last one a success
+SITTING_WAIT_DAYS = 2  # no sitting in the 2 study days after a failed one (a void one: no wait)
+SITTING_WARMUP_MINUTES = 20.0  # never in the first 20 minutes of the day's expected time
+# C, logged (DayPlan.sitting_chances): the model's chance of passing on the chosen problems,
+# (product of their calibrated P) x P(their summed times <= their summed T*), needed to sit.
+SITTING_PASS_MIN = 0.5
+SIGMA_T_DEFAULT = 0.45  # design 3.5's prior for sigma_T, when the model reports none (impl)

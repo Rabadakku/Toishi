@@ -100,12 +100,14 @@ def test_growth_tracks_against_the_current_milestone() -> None:
 
 
 def certify_all(log: Log, sid: str, d: date) -> None:
-    """3 of 3 at tier 2, then 4 of 4 in time at tiers 3 and 4 (T* 3.5 and 5.0 min)."""
+    """3 of 3 at tier 2, then 2 of 2 practice and a passed sitting at tiers 3 and 4."""
     sk = next(s for s in COURSE.skills if s.skill_id == sid)
     t2, t3, t4 = sk.pool[3], sk.pool[6], sk.pool[9]
     log.many(t2, d, "111", role="new")
-    log.many(t3, d, "1111", minutes=3.0)
-    log.many(t4, d, "1111", minutes=4.0)
+    log.many(t3, d, "11", minutes=3.0)
+    log.sitting(sk.pool[7:9], d)
+    log.many(t4, d, "11", minutes=4.0)
+    log.sitting(sk.pool[10:12], d)
 
 
 def test_maintenance_when_every_milestone_is_certified() -> None:
