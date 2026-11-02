@@ -368,6 +368,108 @@ textbook: CLP-1 §A.2
 ### Notes
 Step: [pre.geometry.pythagorean] Pythagoras: the plane is \(s = \sqrt{x^2 + 4000^2}\) ft from the station.
 
+<!-- The three skills above are the original 0.6 block. Ten more follow, so that each geometry fact
+     a solution step recalls is one component of its own (see "The 0.6 Geometry block" in
+     docs/design/calc1-component-map.md). A step that recalls an area, volume or surface-area
+     formula tags the specific component below. pre.geometry.area-volume-formulas keeps its
+     permanent ID, and the skills that point at it, but no 0.6 card tags it. -->
+
+## Skill pre.geometry.area-plane-figures
+name: Recall the area of a plane figure (triangle, parallelogram, trapezoid, circle, ellipse)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+confusable: pre.geometry.perimeter-circumference
+textbook: CLP-1 §A.10; OpenStax Calculus Vol 1 Review of Pre-Calculus (Formulas from Geometry); OpenStax Prealgebra 2e §9.4
+
+### Notes
+Step: [pre.geometry.area-plane-figures] Area: a trapezoid with parallel sides 3 and 7 and height 4 has \(A = \frac{1}{2}(3 + 7)(4) = 20\).
+
+## Skill pre.geometry.perimeter-circumference
+name: Recall a perimeter or circumference (rectangle, polygon, circle)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+confusable: pre.geometry.area-plane-figures
+textbook: OpenStax Prealgebra 2e §9.4, §9.5; OpenStax Calculus Vol 1 Review of Pre-Calculus (Formulas from Geometry)
+
+### Notes
+Step: [pre.geometry.perimeter-circumference] Perimeter: a rectangle \(x\) wide and \(y\) long has perimeter \(2x + 2y\), and a circle of radius \(r\) has circumference \(2\pi r\).
+
+## Skill pre.geometry.volume-solids
+name: Recall a volume formula (prism or box, cylinder, cone, pyramid, sphere)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.area-plane-figures
+confusable: pre.geometry.surface-area-solids
+textbook: CLP-1 §A.11; OpenStax Calculus Vol 1 Review of Pre-Calculus (Formulas from Geometry); OpenStax Prealgebra 2e §9.6
+
+### Notes
+Step: [pre.geometry.volume-solids] Volume: a sphere holds \(V = \frac{4}{3}\pi r^3\) and a cylinder holds \(V = \pi r^2 h\).
+
+## Skill pre.geometry.surface-area-solids
+name: Recall a surface-area formula (box, cylinder, cone, sphere)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.area-plane-figures, pre.geometry.perimeter-circumference
+confusable: pre.geometry.volume-solids
+textbook: CLP-1 §A.11; OpenStax Calculus Vol 1 Review of Pre-Calculus (Formulas from Geometry); OpenStax Prealgebra 2e §9.6
+
+### Notes
+Step: [pre.geometry.surface-area-solids] Surface area: a closed can has \(S = 2\pi r^2 + 2\pi r h\), two circular ends plus the side.
+
+## Skill pre.geometry.arc-sector
+name: Find an arc length or a sector area from the radius and the central angle in radians
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.area-plane-figures, pre.geometry.perimeter-circumference
+confusable: pre.geometry.perimeter-circumference
+textbook: CLP-1 §A.4; OpenStax Calculus Vol 1 Review of Pre-Calculus (Formulas from Geometry)
+
+### Notes
+Step: [pre.geometry.arc-sector] Arc and sector: with \(\theta\) in radians, the arc has length \(s = r\theta\) and the sector has area \(A = \frac{1}{2}r^2\theta\).
+
+## Skill pre.geometry.angle-relationships
+name: Find an unknown angle from angle relationships (complementary, supplementary, vertical, triangle sum, parallel lines)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+textbook: OpenStax Prealgebra 2e §9.3
+
+### Notes
+Step: [pre.geometry.angle-relationships] Angle: the angles of a triangle add to \(180^\circ\), so \(\angle C = 180^\circ - 50^\circ - 70^\circ = 60^\circ\).
+
+## Skill pre.geometry.special-right-triangles
+name: Find the sides of a 45-45-90 or a 30-60-90 triangle from one side
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.pythagorean
+confusable: pre.geometry.pythagorean
+textbook: CLP-1 §A.6
+
+### Notes
+Step: [pre.geometry.special-right-triangles] Special triangle: a 30-60-90 triangle has sides in the ratio \(1 : \sqrt{3} : 2\), so a hypotenuse of 10 gives legs 5 and \(5\sqrt{3}\).
+
+## Skill pre.geometry.distance-formula
+name: Find the distance between two points with the distance formula, or write a circle's equation
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.pythagorean
+confusable: pre.geometry.pythagorean
+textbook: OpenStax Intermediate Algebra 2e §11.1; CLP-1 §A.2
+
+### Notes
+Step: [pre.geometry.distance-formula] Distance: \(d = \sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}\) between \((1, 2)\) and \((4, 6)\) is \(\sqrt{9 + 16} = 5\).
+
+## Skill pre.geometry.law-of-cosines
+name: Find a side of a triangle from two sides and the angle between them (law of cosines)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.pythagorean
+confusable: pre.geometry.pythagorean
+textbook: OpenStax Precalculus 2e §8.2; OpenStax Calculus Vol 1 Review of Pre-Calculus (Law of Cosines)
+
+### Notes
+Step: [pre.geometry.law-of-cosines] Law of cosines: \(c^2 = a^2 + b^2 - 2ab\cos C\), so sides 3 and 5 with a \(60^\circ\) angle between them give \(c^2 = 9 + 25 - 15 = 19\).
+
+## Skill pre.geometry.composite-figures
+name: Build the area, perimeter, volume or surface area of a composite figure from its pieces (add or subtract, and drop a shared edge)
+deck: Calculus I::0 Precalculus Skills::0.6 Geometry
+requires: pre.geometry.volume-solids, pre.geometry.surface-area-solids
+confusable: pre.geometry.perimeter-circumference
+textbook: OpenStax Prealgebra 2e §9.5, §9.6; OpenStax Calculus Vol 1 §4.7
+
+### Notes
+Step: [pre.geometry.composite-figures] Compose: a Norman window is a rectangle topped by a semicircle, so its perimeter is \(2h + w + \frac{\pi w}{2}\): the shared edge is not part of it.
+
 <!-- ==================== 2 Limits ==================== -->
 
 <!-- 2.1 A Preview of Calculus -->

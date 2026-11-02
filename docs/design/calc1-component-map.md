@@ -10,9 +10,10 @@ A problem's components are its `skill`, its `uses` and its step tags, and every 
 names exactly one component. The model predicts a student's chance on a problem from those
 components, so two procedures that fail independently must be two components.
 
-- **Size:** 162 components. 123 are calculus components (`calc1.`) and 39 are precalculus
+- **Size:** 172 components. 123 are calculus components (`calc1.`) and 49 are precalculus
   components (`alg.`, `trig.`, `pre.`) that calculus solution steps use. There are 7
-  method-choice components and 53 confusable pairs.
+  method-choice components and 60 confusable pairs. (The 0.6 Geometry block grew from 3
+  components to 13 when its cards were written; see "The 0.6 Geometry block".)
 - **Checks:** the file loads with `core/cards/skillfile.py` and passes `core/cards/graph.py`
   with no unknown IDs, no cycles and no redundant prerequisite edges. Every skill has a name,
   deck, textbook reference and Notes line. All 340 math fragments in the Notes render with KaTeX
@@ -53,7 +54,7 @@ components, so two procedures that fail independently must be two components.
 | 0.3 Functions and Graphs | 7 | 3.9 Derivatives of Exponential and Logarithmic Functions | 3 |
 | 0.4 Trigonometry | 7 | 4.1 Related Rates | 6 |
 | 0.5 Exponents and Logarithms | 4 | 4.2 Linear Approximations and Differentials | 4 |
-| 0.6 Geometry | 3 | 4.3 Maxima and Minima | 3 |
+| 0.6 Geometry | 13 | 4.3 Maxima and Minima | 3 |
 | 2.1 A Preview of Calculus | 2 | 4.4 The Mean Value Theorem | 3 |
 | 2.2 The Limit of a Function | 3 | 4.5 Derivatives and the Shape of a Graph | 7 |
 | 2.3 The Limit Laws | 9 | 4.6 Limits at Infinity and Asymptotes | 6 |
@@ -77,7 +78,7 @@ By chapter:
 | 3 Derivatives | 29 |
 | 4 Applications of Derivatives | 48 |
 | 5 Integration | 25 |
-| 0 Precalculus Skills | 39 |
+| 0 Precalculus Skills | 49 |
 
 The skill's deck is the section that first teaches the procedure. A component used later lives
 where it was taught. For example, `calc1.deriv.tangent-line` sits in 3.1, and 4.2's
@@ -418,9 +419,10 @@ Each is a step whose result can be checked:
 | Net change | `integrate-rate` (an amount), `interpret` (a meaning with units, as a choice) |
 | Substitution | `choose-u` (the expression u) |
 
-## Precalculus components (39)
+## Precalculus components (49)
 
-They have no problems yet (as briefed). They exist so that steps can be tagged and a miss can be
+They have no problems yet (as briefed), except the 0.6 Geometry components, whose cards are in
+`packs/calc1/0-6-geometry.cards.md`. They exist so that steps can be tagged and a miss can be
 routed to algebra instead of calculus.
 
 - **0.1 Algebraic Expressions:**
@@ -451,11 +453,72 @@ routed to algebra instead of calculus.
 - **0.5 Exponents and Logarithms:**
   - `alg.exponents.rules` and `.rewrite-as-power`;
   - `alg.logs.properties` and `.solve-equations`.
-- **0.6 Geometry:**
-  - `pre.geometry.area-volume-formulas`, `.similar-triangles` and `.pythagorean`.
+- **0.6 Geometry** (13, listed in "The 0.6 Geometry block" below):
+  - the original `pre.geometry.area-volume-formulas`, `.similar-triangles` and `.pythagorean`;
+  - ten more, `.area-plane-figures`, `.perimeter-circumference`, `.volume-solids`,
+    `.surface-area-solids`, `.arc-sector`, `.angle-relationships`, `.special-right-triangles`,
+    `.distance-formula`, `.law-of-cosines` and `.composite-figures`.
 
 The separate rewrite step (`alg.exponents.rewrite-as-power`) and the separate sign chart are the
 two precalculus components the calculus splits above rely on most.
+
+## The 0.6 Geometry block
+
+The block grew from 3 components to 13 when its cards were written
+(`packs/calc1/0-6-geometry.cards.md`; the card counts, sources and uncertainties are in
+`docs/design/calc1-0-6-notes.md`). Students forget geometry definitions and formulas, and related
+rates and optimization depend on them, so each fact that a solution step recalls had to be one
+component of its own: a student who knows \(\pi r^2\) but not \(\frac{1}{3}\pi r^2 h\) fails
+different steps. The original `pre.geometry.area-volume-formulas` bundled at least eight such
+facts under one tag. The three original components keep their IDs and fields; ten were added.
+Every `pre.geometry.` ID is below, with the prefix left off.
+
+| Component | The one thing | Requires | Confusable with |
+|---|---|---|---|
+| `area-volume-formulas` (original) | umbrella for the formulas below; no 0.6 card tags it | | |
+| `similar-triangles` (original) | set up a proportion between corresponding sides | | `pythagorean` |
+| `pythagorean` (original) | the square of the hypotenuse is the sum of the squares of the legs | | `similar-triangles` |
+| `area-plane-figures` | area of a triangle, parallelogram, trapezoid, circle or ellipse | | `perimeter-circumference` |
+| `perimeter-circumference` | perimeter of a polygon, circumference of a circle | | `area-plane-figures` |
+| `volume-solids` | volume of a box or prism, cylinder, cone, pyramid, sphere | `area-plane-figures` | `surface-area-solids` |
+| `surface-area-solids` | surface area of a box, cylinder, cone, sphere | `area-plane-figures`, `perimeter-circumference` | `volume-solids` |
+| `arc-sector` | arc length \(r\theta\) and sector area \(\frac{1}{2}r^2\theta\), with \(\theta\) in radians | `area-plane-figures`, `perimeter-circumference` | `perimeter-circumference` |
+| `angle-relationships` | an unknown angle from complementary, supplementary, vertical, parallel-line and triangle-sum facts | | |
+| `special-right-triangles` | the sides of a 45-45-90 or 30-60-90 triangle from one side | `pythagorean` | `pythagorean` |
+| `distance-formula` | the distance between two points, and the equation of a circle | `pythagorean` | `pythagorean` |
+| `law-of-cosines` | the third side from two sides and the angle between them | `pythagorean` | `pythagorean` |
+| `composite-figures` | build an area, perimeter, volume or surface area from pieces: add, subtract, drop a shared edge | `volume-solids`, `surface-area-solids` | `perimeter-circumference` |
+
+How the block is tagged:
+
+- A step that recalls an area, perimeter, volume or surface-area formula carries the specific
+  component. `area-volume-formulas` keeps its ID and its three dependents but is not tagged by
+  any 0.6 card.
+- Putting a figure together from pieces (including which edges count) is `composite-figures`; the
+  formulas for the pieces are the other components.
+- Finding a missing side with the Pythagorean theorem stays `pythagorean`. The 45-45-90 and
+  30-60-90 ratios, the distance between two points and the law of cosines are separate
+  components, because a student can know the theorem and still not recall them.
+- The radian arc and sector formulas are separate from the circle's \(\pi r^2\) and \(2\pi r\):
+  they fail separately, and the radian measure comes from `trig.angles.radians`.
+- Status of the splits, in the map's terms: *textbook* for all ten (each has its own section in
+  OpenStax Prealgebra 2e, Precalculus 2e or CLP-1 Appendix A), except `composite-figures`, which
+  is *provisional*: if its misses always coincide with the misses on the pieces' formulas, merge it.
+
+Follow-ups outside the 0.6 block (not made here):
+
+1. Three skills still point at the umbrella, which has no cards:
+   `calc1.optimize.objective` and `calc1.defint.geometry` (`requires`) and
+   `calc1.select.related-rates-relation` (`chooses`). Retarget them, for example
+   `calc1.optimize.objective` to `area-plane-figures`, `volume-solids` and
+   `surface-area-solids`; `calc1.defint.geometry` to `area-plane-figures`; and the chooser to
+   the specific volume and area components. Until then they inherit open question 1 below.
+2. The original `pythagorean` name still says "or the distance formula", which
+   `distance-formula` now owns. IDs are permanent but names are not, so the name can be trimmed.
+3. `angle-relationships` has no genuine confusable, so the pool report lists it as missing one.
+4. Not components yet: the midpoint formula, law of sines, and circle theorems (tangent and
+   radius, angle in a semicircle). None is needed by the section 4.1 and 4.7 problems the block
+   supports.
 
 ## Open questions
 
@@ -472,8 +535,9 @@ two precalculus components the calculus splits above rely on most.
      - precalculus gets problems or placement items;
      - the precalculus edges move to `uses`.
 2. **GRAPH-4 asks for a confusable skill on every skill** (`core/cards/graph.py` `pool_report`).
-   I set `confusable` only where students really mix two up, 53 pairs, as briefed. The pool
-   report will list the rest until that target or the map changes.
+   I set `confusable` only where students really mix two up, 53 pairs, as briefed (60 now, with
+   the 7 added in the 0.6 Geometry block). The pool report will list the rest until that target
+   or the map changes.
 3. **Two limit choosers or one?** If the data shows `limit-algebraic` and `limit-technique` move
    together, retire one. They can't be merged without retiring an ID.
 4. **Provisional splits to check with learning-curve data:**
