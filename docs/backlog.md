@@ -278,3 +278,11 @@ read handwritten steps). Plan:
   - Lectures: MIT OCW 18.01 (openly licensed); others such as 3Blue1Brown as links only, opened in the browser (the app stays offline).
   - Verification: CAS checks of every formula and example, two independent reviews per page, an error-report path.
   - Order: problems, then precalculus geometry, then Learn pages.
+
+## Wave 2 follow-ups (practice design research, 2026-11-02)
+From `docs/design/practice-research-analysis.md`. Build after W3, W1 and W2 merge, as one change per item.
+- **A new skill opens with a problem** (§5). The New role serves a tier-1 problem first; its WorkItem carries the example card as reference. A "Worked example" button in the new-skill block opens it, and opening it before the first answer makes that try aided. Later problems show the textbook pointer only; sittings show nothing.
+- **Closed book stated up front** (§5): the course page and the first sitting say that M2 and M3 are certified in closed-book timed sittings.
+- **New flashcards need two correct recalls on day one** (§6). After a new card's first Good, it comes back at least 5 items later in the same session; the second answer is a same-day FSRS event. Anki's default learning steps do the same.
+- **The study plan screen (LIB-12)** (§2): when and where, the likely obstacle, an if-then plan. Not built yet.
+- **Owner decision pending:** a comparison line under the solution after a give-up (§1): the student's last answer beside the solution, and "Find the first line where your work and this solution part ways."
