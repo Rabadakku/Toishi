@@ -21,3 +21,6 @@ logs/
 
 # Mac runner requests and status (scripts/mac-runner.sh)
 .runner/
+
+# Agent worktrees (local only)
+.claude/worktrees/
