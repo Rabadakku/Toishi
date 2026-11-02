@@ -22,6 +22,7 @@ import random
 import shutil
 import signal
 import sqlite3
+import statistics
 import subprocess
 import sys
 import time
@@ -38,12 +39,12 @@ from app.packs import shipped_packs
 from core import cards, grader
 from core.engine import Engine
 from core.queue import StudyService
-from core.storage import Storage
+from core.storage import Database, Storage
 from core.storage.backups import BackupManager
 from core.storage.clock import FixedClock, to_ms
 from core.storage.connection import connect, integrity_problems
 from core.storage.profiles import ProfilePaths
-from core.storage.schema import USER_SCHEMA_VERSION, user_version
+from core.storage.schema import MIGRATIONS, USER_SCHEMA_VERSION, user_version
 from tests.importers.conftest import FIXTURES as DECKS
 from tests.storage.data import dump_state
 from tests.storage.study_driver import key_checker
@@ -113,9 +114,19 @@ class Children:
         assert kind != "error", rest.replace(" | ", "\n")
         return kind, rest
 
-    def run(self, job: dict[str, Any], *, acks: int | None, delay: float = 0.0) -> Round:
+    def run(
+        self,
+        job: dict[str, Any],
+        *,
+        acks: int | None,
+        delay: float = 0.0,
+        after_begin: float | None = None,
+    ) -> Round:
         """Start a job; after `acks` acknowledgments (None: never) and `delay` seconds,
-        SIGKILL its process group. Returns everything it said."""
+        SIGKILL its process group. With `after_begin`, the kill is aimed instead at that many
+        seconds after the moment the child stamped on its first line (`t`, its monotonic
+        clock, which is the machine's), so the time this process takes to read the line
+        does not shift the aim. Returns everything it said."""
         assert self.proc.stdin is not None
         job = {**job, "linger": acks is not None}
         self.proc.stdin.write(json.dumps(job) + "\n")
@@ -126,7 +137,13 @@ class Children:
         killed = False
         while True:
             if not killed and acks is not None and current.lines and len(current.acks) >= acks:
-                time.sleep(delay)
+                wait = delay
+                began = current.lines[0][1].get("t")
+                if after_begin is not None and began is not None:
+                    wait = began + after_begin - time.monotonic()
+                    if wait > after_begin + 1.0:  # not the same clock after all: plain delay
+                        wait = after_begin
+                time.sleep(max(0.0, wait))
                 os.killpg(current.pid, signal.SIGKILL)
                 killed = True
             kind, rest = self._line()
@@ -329,29 +346,63 @@ def test_anki_imports_survive_sigkill(tmp_path: Path, children: Children) -> Non
 # ---------------------------------------------------------------- migrations
 
 
+def migrated_states(template: Path, tmp: Path) -> dict[int, dict[str, list[tuple[Any, ...]]]]:
+    """The fixture's exact state at every schema version it passes through on open: the
+    steps are deterministic (no clock), so each version has exactly one right state."""
+    states: dict[int, dict[str, list[tuple[Any, ...]]]] = {}
+    work = tmp / "states" / "user.db"
+    shutil.copytree(template.parent, work.parent)
+    for version in range(1, USER_SCHEMA_VERSION + 1):
+        if version > 1:
+            db = Database.open(work, migrations=MIGRATIONS[:version], target_version=version)
+            db.close()
+        conn = sqlite3.connect(work)
+        try:
+            assert user_version(conn) == version
+            states[version] = dump_state(conn)
+        finally:
+            conn.close()
+    return states
+
+
 def test_migrations_survive_sigkill(tmp_path: Path, children: Children) -> None:
+    """Kills aimed inside the open of a schema-v1 profile, which backs up and migrates it
+    step by step (v1 -> v2 -> v3, a backup before each step). After every kill the file is
+    exactly the state of one version (the steps are all-or-nothing), every finished backup
+    is exactly the state before its step, and the next open finishes the migration.
+
+    The aim: five timed probe opens measure how long an open takes here, and every round
+    whose open finished before its kill measures it again (opens get faster once caches are
+    warm). Each kill is aimed at a uniform moment within the median of the last five
+    measurements, counted from the child's own start stamp, so the time this process takes
+    to read the child's first line doesn't push kills past the end on a fast machine. A kill
+    that still lands after the open is checked like any other, and the rounds go on (up to
+    three times the planned number) until enough kills have landed inside."""
     template = tmp_path / "v1" / "user.db"
     load_v1_fixture(template)
-    conn = sqlite3.connect(template)
-    original = dump_state(conn)
-    conn.close()
+    states = migrated_states(template, tmp_path)
+    original = states[1]
     counts = {t: len(r) for t, r in original.items()}
     rng = random.Random(SEED + 2)  # noqa: S311
-    # How long an open with its migration takes here, to aim the kills inside it.
     spans = []
-    for n in range(3):
+    for n in range(5):
         probe = tmp_path / f"probe{n}"
         shutil.copytree(template.parent, probe)
         timed = children.run({"job": "migrate", "root": str(probe), "start_ms": START}, acks=None)
         spans.append(timed.acks[-1]["t"] - timed.lines[0][1]["t"])
-    span = sorted(spans)[1]
-    during = 0
-    for index in range(MIGRATION_KILLS):
-        root = tmp_path / f"m{index}"
+    needed = MIGRATION_KILLS // 3
+    during = rounds = 0
+    seen: dict[int, int] = {}
+    while rounds < MIGRATION_KILLS or (during < needed and rounds < 3 * MIGRATION_KILLS):
+        root = tmp_path / f"m{rounds}"
         shutil.copytree(template.parent, root)
-        job: dict[str, Any] = {"job": "migrate", "root": str(root), "start_ms": START + index}
-        done = children.run(job, acks=0, delay=rng.uniform(0, span))
+        job: dict[str, Any] = {"job": "migrate", "root": str(root), "start_ms": START + rounds}
+        span = statistics.median(spans[-5:])
+        done = children.run(job, acks=0, after_begin=rng.uniform(0, span))
+        rounds += 1
         during += done.in_flight == "migrate"
+        if done.in_flight != "migrate" and done.acks:  # it finished first: a new measurement
+            spans.append(done.acks[-1]["t"] - done.lines[0][1]["t"])
         db = root / "user.db"
         check_database(db)
         conn = connect(db, mode="ro")
@@ -360,15 +411,15 @@ def test_migrations_survive_sigkill(tmp_path: Path, children: Children) -> None:
             state = dump_state(conn)
         finally:
             conn.close()
-        assert version in (1, USER_SCHEMA_VERSION)
-        if version == 1:
-            assert state == original  # rolled back: exactly the v1 data
-        else:
-            assert {t: len(state[t]) for t in original} == counts  # migrated: nothing lost
+        assert version in states  # a whole version: each step is all-or-nothing
+        assert state == states[version]  # exactly that version's data: nothing lost
+        seen[version] = seen.get(version, 0) + 1
         for backup in BackupManager(db, root / "backups", clock=FixedClock(START, tz=NY)).all():
             conn = sqlite3.connect(backup.path)
             try:
-                assert dump_state(conn) == original  # a finished backup is the v1 data
+                before = user_version(conn)
+                assert before < USER_SCHEMA_VERSION  # taken before a step
+                assert dump_state(conn) == states[before]  # a finished backup: that state
             finally:
                 conn.close()
         with Storage.open(ProfilePaths(root), clock=FixedClock(START + 10_000, tz=NY)) as s:
@@ -376,10 +427,14 @@ def test_migrations_survive_sigkill(tmp_path: Path, children: Children) -> None:
         conn = connect(db, mode="ro")
         try:
             assert user_version(conn) == USER_SCHEMA_VERSION  # the next open finishes it
+            assert dump_state(conn) == states[USER_SCHEMA_VERSION]
         finally:
             conn.close()
     KILLS["migrations: during the open"] = during
-    KILLS["migrations: after it"] = MIGRATION_KILLS - during
-    print(f"\nDEV-8 migrations: {MIGRATION_KILLS} kills, {during} inside the open ({span:.3f} s)")
+    KILLS["migrations: after it"] = rounds - during
+    print(
+        f"\nDEV-8 migrations: {rounds} kills, {during} inside the open ({span:.3f} s), "
+        f"versions found {dict(sorted(seen.items()))}"
+    )
     print(f"DEV-8 kills: {sum(KILLS.values())} {json.dumps(KILLS, sort_keys=True)}")
-    assert during >= MIGRATION_KILLS // 3  # the kills really landed inside migrations
+    assert during >= needed  # the kills really landed inside migrations

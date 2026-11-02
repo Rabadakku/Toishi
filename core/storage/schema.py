@@ -12,7 +12,13 @@ reasons (pending_check.reason). Packs are never migrated: the app reads v1, v2 a
 
 Pack schema v3 adds pack-only tables for the student model (pack_v3.sql): `time:` standard
 times (card_time) and the pace standard (pace, pace_section). The content tables are
-unchanged (content v2), so user.db stays at v2 and keeps exactly the shape of a pack's.
+unchanged (content v2), so user.db's own content keeps exactly the shape of a pack's.
+
+user.db v3 (wave 2, docs/design/wave2-integration.md section 2) brings the student model and
+planner into the profile: attempt gains what the planner chose and the learner used (role,
+milestone, missed, plan_p, ladder, sitting, learner_version, valid_minutes), course_settings
+holds each course's setup, learner_params the shared parameter versions. A course goal's
+start date (and goal date, the same "drop to Keep" day) seed its course_settings row.
 """
 
 # ruff: noqa: S608 -- table and column names come from our own constants; values are always bound parameters.
@@ -26,7 +32,7 @@ from typing import Any
 
 from core.storage.errors import MigrationError, NotOurDatabaseError, SchemaTooNewError
 
-USER_SCHEMA_VERSION = 2
+USER_SCHEMA_VERSION = 3
 PACK_SCHEMA_VERSION = 3
 CONTENT_SCHEMA_VERSION = 2  # the content tables (content_v2.sql) of packs and user.db
 MODEL_TABLES_SINCE = 3  # packs from v3 on have card_time, pace and pace_section
@@ -168,9 +174,26 @@ def _v2_homes(conn: sqlite3.Connection) -> None:
             conn.execute("UPDATE pending_check SET reason = ? WHERE id = ?", (reason, check_id))
 
 
+# ---------------------------------------------------------------- v3 (wave 2)
+
+
+def _v3_practice(conn: sqlite3.Connection) -> None:
+    """The planner's and learner's columns and tables, then each course goal's start date
+    and goal date copied into a course_settings row (wave2-integration.md section 2). One
+    transaction with the version bump: a crash leaves v2 untouched. The course goal rows
+    stay as they are; nothing reads them for problems any more."""
+    run_script(conn, sql_file("migrate_user_v3.sql"))
+    conn.execute(
+        "INSERT INTO course_settings (course_id, start, end_day, updated_at) "
+        "SELECT course_id, starts_on, goal_date, updated_at FROM course_goal "
+        "WHERE starts_on IS NOT NULL OR goal_date IS NOT NULL ORDER BY course_id"
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "baseline", _v1_baseline),
     Migration(2, "homes for template parameters and sources, own media, check reasons", _v2_homes),
+    Migration(3, "student model and planner: course settings, parameters", _v3_practice),
 )
 
 

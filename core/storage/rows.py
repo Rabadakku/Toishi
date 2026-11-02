@@ -75,6 +75,9 @@ OTHER_TABLES: dict[type[Any], Table] = {
         # the student's own content that packs don't have (v2, ADR-0011)
         Table("user_template", model.TemplateSource, ("id",), stamp=("updated_at",)),
         Table("user_media", model.CardMedia, ("card_id", "ref")),
+        # the student model and planner (v3, wave 2)
+        Table("course_settings", model.CourseSetup, ("course_id",), stamp=("updated_at",)),
+        Table("learner_params", model.LearnerParams, ("version",), stamp=("created_at",)),
     )
 }
 ALL_TABLES: dict[type[Any], Table] = {**STATE_TABLES, **OTHER_TABLES}

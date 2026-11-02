@@ -41,6 +41,7 @@ from core.storage.schema import (
 )
 from tests.storage import v1_cards
 from tests.storage.data import some
+from tests.storage.test_migration_v3 import expected_v3
 from tests.storage.v1_cards import PACK_V1, load_fixture
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,11 +132,18 @@ def expected_v2(v1: Rows, *, cards: bool) -> Rows:
 
 
 def assert_complete_v2(db: Path, v1: Rows, *, cards: bool) -> None:
-    assert version_of(db) == USER_SCHEMA_VERSION == 2
+    """A complete v2, or, once today's app opened it, its migration onward: v3 keeps every
+    v2 row and value (tests/storage/test_migration_v3.py says exactly how)."""
     assert integrity_problems(db, full=True) == []
     after = rows_of(db)
     after["user_template"].sort(key=lambda r: r["id"])
-    assert after == expected_v2(v1, cards=cards)
+    expected = expected_v2(v1, cards=cards)
+    version = version_of(db)
+    if version == 3:
+        expected = expected_v3(expected)
+    else:
+        assert version == 2
+    assert after == expected
 
 
 def fresh_signature(tmp: Path) -> list[tuple[str, str]]:
@@ -176,9 +184,9 @@ def test_the_v1_history_fixture_migrates_every_row_and_value(tmp_path: Path) -> 
         assert schema_signature(conn) == fresh_signature(tmp_path)
     finally:
         conn.close()
-    (backup,) = BackupManager(paths.user_db, paths.backups_dir, clock=clock).all()
-    assert backup.reason == "pre-migration"  # BAK-2: the v1 state, kept
-    assert rows_of(backup.path) == v1
+    backups = BackupManager(paths.user_db, paths.backups_dir, clock=clock).all()
+    assert len(backups) == USER_SCHEMA_VERSION - 1  # one before each step
+    assert_step_backups(backups, v1, cards=False)  # BAK-2: the v1 state, kept
 
 
 def test_the_v1_cards_fixture_migrates_every_row_and_value(tmp_path: Path) -> None:
@@ -200,8 +208,9 @@ def test_the_v1_cards_fixture_migrates_every_row_and_value(tmp_path: Path) -> No
     first, _, third = sorted(v1["import_record"], key=lambda r: r["id"])
     assert sources["mine.alg.mul.t01"]["updated_at"] == first["at"]  # retired: kept
     assert sources["mine.alg.double.t01"]["updated_at"] == third["at"]
-    # The logs are append-only (DATA-5): the old text stays there as history.
-    assert after["attempt"] == v1["attempt"]
+    # The logs are append-only (DATA-5): the old text stays there as history (v3 only adds
+    # empty columns to it).
+    assert [{k: r[k] for k in v1["attempt"][0]} for r in after["attempt"]] == v1["attempt"]
     assert after["import_record"] == v1["import_record"]
     conn = sqlite3.connect(paths.user_db)
     try:
@@ -217,7 +226,8 @@ def test_migrating_again_finds_nothing_to_do(tmp_path: Path) -> None:
     Storage.open(paths).close(backup=False)
     with Storage.open(paths) as storage:
         assert storage.backups.all()[0].reason == "pre-migration"
-        assert [b.reason for b in storage.backups.all()].count("pre-migration") == 1
+        reasons = [b.reason for b in storage.backups.all()]
+        assert reasons.count("pre-migration") == USER_SCHEMA_VERSION - 1  # the first open's
     assert_complete_v2(paths.user_db, v1, cards=True)
 
 
@@ -385,9 +395,20 @@ def assert_v1_or_complete_v2(paths: ProfilePaths, v1: Rows) -> str:
     assert_complete_v2(db, v1, cards=True)
     backups = BackupManager(db, paths.backups_dir, clock=FixedClock(0)).all()
     assert backups
-    assert all(b.reason == "pre-migration" for b in backups)
-    assert all(rows_of(b.path) == v1 for b in backups)  # each one the v1 state
+    assert_step_backups(backups, v1, cards=True)  # each one the state before its step
     return found
+
+
+def assert_step_backups(backups: list[Any], v1: Rows, *, cards: bool) -> None:
+    """Each pre-migration backup is the state right before its step: the untouched v1
+    before v2, a complete v2 before v3."""
+    for backup in backups:
+        assert backup.reason == "pre-migration"
+        if version_of(backup.path) == 1:
+            assert rows_of(backup.path) == v1
+        else:
+            assert version_of(backup.path) == 2
+            assert_complete_v2(backup.path, v1, cards=cards)
 
 
 def crash_at(tmp_path: Path, name: str, steps: int) -> str:
@@ -442,7 +463,8 @@ def test_the_v1_code_path_refuses_a_v2_database_untouched(tmp_path: Path) -> Non
     load_fixture(V1_CARDS, paths.user_db)
     Storage.open(paths).close(backup=False)
     digest = hashlib.sha256(paths.user_db.read_bytes()).hexdigest()
-    with pytest.raises(SchemaTooNewError, match="v2; this app understands up to v1"):
+    newer = f"v{USER_SCHEMA_VERSION}; this app understands up to v1"
+    with pytest.raises(SchemaTooNewError, match=newer):
         Database.open(paths.user_db, migrations=MIGRATIONS[:1], target_version=1)
     assert hashlib.sha256(paths.user_db.read_bytes()).hexdigest() == digest
 
@@ -527,12 +549,14 @@ def test_the_released_v1_code_refuses_v2_files_untouched(tmp_path: Path) -> None
     )
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.splitlines()
+    refused = (
+        f"user.db is schema v{USER_SCHEMA_VERSION}; this app understands up to v1. "
+        "Update the app; the file was left untouched."
+    )
     assert lines == [
-        "refused profile: user.db is schema v2; this app understands up to v1. "
-        "Update the app; the file was left untouched.",
+        f"refused profile: {refused}",
         f"refused pack: {pack} is pack schema v{PACK_SCHEMA_VERSION}; this app reads up to v1",
-        "refused meprofile: user.db is schema v2; this app understands up to v1. "
-        "Update the app; the file was left untouched.",
+        f"refused meprofile: {refused}",
     ]
 
 

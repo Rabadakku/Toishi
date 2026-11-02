@@ -76,7 +76,12 @@ def test_v1_fixture_migrates_to_the_current_schema(tmp_path: Path, clock) -> Non
     fresh = ProfilePaths(tmp_path / "fresh")
     Storage.open(fresh, clock=clock, create=True).close(backup=False)
     assert signature(paths.user_db) == signature(fresh.user_db)
-    new_tables = {"user_template": 0, "user_media": 0}  # v2; this history has nothing for them
+    new_tables = {
+        "user_template": 0,  # v2: this history has no template sources ...
+        "user_media": 0,  # ... and no own media
+        "course_settings": 1,  # v3: its course goal has a goal date, the new end date
+        "learner_params": 0,  # v3: the prior is written on first use
+    }
     assert table_counts(paths.user_db) == rows_before | new_tables  # nothing lost
     assert integrity_problems(paths.user_db, full=True) == []
 

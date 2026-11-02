@@ -28,6 +28,7 @@ from core.model import (
     CardUser,
     Course,
     CourseGoal,
+    CourseSetup,
     DiagnosticSet,
     Dispute,
     DisputeStatus,
@@ -36,6 +37,7 @@ from core.model import (
     GradedAnswer,
     ImplicitCredit,
     ImportRecord,
+    LearnerParams,
     PendingCheck,
     Report,
     ReportStatus,
@@ -313,6 +315,43 @@ class UserStore:
     def section_states(self) -> dict[str, SectionState]:
         return {s.section_id: s for s in self._list(SectionState)}
 
+    # ------------------------------------------------------------ planner and learner (v3)
+
+    def set_course_setup(self, setup: CourseSetup) -> CourseSetup:
+        """Add or replace a course's setup (the caller checks the course exists: courses
+        live in packs, which the table cannot reference)."""
+        return self._put(replace(setup, updated_at=self._now()))
+
+    def course_setup(self, course_id: str) -> CourseSetup | None:
+        return self._get(CourseSetup, course_id=course_id)
+
+    def course_setups(self) -> list[CourseSetup]:
+        return self._list(CourseSetup)
+
+    def learner_params(self, version: str | None = None) -> LearnerParams | None:
+        """The current parameter version, or the named one; None when there is none."""
+        if version is not None:
+            return self._get(LearnerParams, version=version)
+        found = self._list(LearnerParams, "current = 1")
+        return found[0] if found else None
+
+    def learner_param_history(self) -> list[LearnerParams]:
+        """Every parameter version, oldest first."""
+        return self._list(LearnerParams, order="created_at, version")
+
+    def add_learner_params(self, record: LearnerParams) -> LearnerParams:
+        """Write a new parameter version. When it is current, the version current before
+        stops being current in the same transaction. A version is never rewritten."""
+
+        def write(conn: sqlite3.Connection) -> LearnerParams:
+            if rows.select_one(conn, LearnerParams, version=record.version) is not None:
+                raise StorageError(f"parameter version {record.version} already exists")
+            if record.current:
+                conn.execute("UPDATE learner_params SET current = 0 WHERE current = 1")
+            return self._put_in(conn, record, self._now())
+
+        return self._db.write(write)
+
     # ------------------------------------------------------------ memory state
 
     def skill_state(self, skill_id: str) -> SkillState | None:
@@ -481,6 +520,7 @@ class UserStore:
         include_voided: bool = False,
         limit: int | None = None,
         newest_first: bool = False,
+        after_id: int | None = None,
     ) -> list[Attempt]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -491,6 +531,9 @@ class UserStore:
         if session_id is not None:
             clauses.append("session_id = ?")
             params.append(session_id)
+        if after_id is not None:
+            clauses.append("id > ?")
+            params.append(after_id)
         if since is not None:
             clauses.append("at >= ?")
             params.append(since)
@@ -507,6 +550,17 @@ class UserStore:
     def last_attempt(self, *, include_voided: bool = False) -> Attempt | None:
         found = self.attempts(include_voided=include_voided, limit=1, newest_first=True)
         return found[0] if found else None
+
+    def attempt_log_key(self) -> tuple[int, int]:
+        """(the newest non-voided attempt id or 0, the number of voided attempts): what a
+        state derived from the log depends on. New answers raise the first; undo, disputes
+        and reports change both."""
+        with self._db.reading() as conn:
+            row = conn.execute(
+                "SELECT coalesce((SELECT max(id) FROM attempt WHERE voided_by IS NULL), 0), "
+                "(SELECT count(*) FROM attempt WHERE voided_by IS NOT NULL)"
+            ).fetchone()
+        return int(row[0]), int(row[1])
 
     def review_events(
         self,

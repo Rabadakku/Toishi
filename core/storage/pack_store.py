@@ -94,6 +94,16 @@ class PackStore:
     def courses(self) -> list[Course]:
         return self._all(lambda s: s.courses())
 
+    def course_sources(self) -> dict[str, str]:
+        """Course id -> the pack id that holds it ("user" for the student's own); the first
+        source in attach order wins, as for every other lookup."""
+        out: dict[str, str] = {}
+        with self._sources() as sources:
+            for source in sources:
+                for course in source.courses():
+                    out.setdefault(course.id, source.source)
+        return out
+
     def units(self) -> list[Unit]:
         return self._all(lambda s: s.units())
 

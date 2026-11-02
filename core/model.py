@@ -54,6 +54,15 @@ WeakSpotStatus = Literal["open", "confirmed", "cleared"]
 DiagnosticStatus = Literal["pending", "active", "confirmed", "cleared", "cancelled"]
 DisputeStatus = Literal["open", "upheld", "rejected"]
 ReportStatus = Literal["open", "fixed", "dismissed"]
+# v3 (wave 2): the planner's roles and milestones as attempts log them (core.plan's types,
+# repeated here so core.model stays free of imports), and the learner's parameter sources.
+PlanRole = Literal[
+    "new", "growth", "maintenance", "check", "practice-test", "focused", "sitting", "placement"
+]
+MilestoneName = Literal["M1", "M2", "M3", "keep"]
+GrowthBand = Literal["standard", "hard"]
+ParamsSource = Literal["prior", "refit", "reset"]
+LADDER_RUNGS = (0, 1, 2)  # the stuck ladder's item rungs (3, set aside, serves nothing)
 
 # In a GradedAnswer, a PendingCheck's attempt_id or resolved_by may be THIS_ATTEMPT:
 # storage replaces it with the id of the attempt being recorded.
@@ -568,6 +577,63 @@ class Exam:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CourseSetup:
+    """A course's setup for the planner (v3, table course_settings; student-model design
+    4.1): the pace anchor (a start date, or "my class is at section X today"), the pace
+    factor, the targets, the end date and the growth band. Without a start or an alignment
+    the course has no schedule."""
+
+    course_id: str
+    start: date | None = None
+    aligned_deck: str | None = None  # "my class is at this section ..."
+    aligned_day: date | None = None  # "... today"
+    pace_factor: float = 1.0
+    accuracy_target: float = 0.90
+    target_tier: int = 4
+    end_day: date | None = None  # None: self-study, never drops to Keep
+    keep_target: float = 0.80
+    keep_tier: int = 3
+    growth_band: GrowthBand = "standard"  # standard 0.70-0.90, hard 0.50-0.75
+    updated_at: int = 0
+
+    def __post_init__(self) -> None:
+        _nonempty("course id", self.course_id)
+        if (self.aligned_deck is None) != (self.aligned_day is None):
+            raise ShapeError("an alignment needs both its section and its day")
+        if self.aligned_deck is not None:
+            _nonempty("aligned section", self.aligned_deck)
+        if not (math.isfinite(self.pace_factor) and 0.75 <= self.pace_factor <= 1.5):
+            raise ShapeError(f"pace factor must be within [0.75, 1.5], got {self.pace_factor!r}")
+        for name, value in (
+            ("accuracy target", self.accuracy_target),
+            ("keep target", self.keep_target),
+        ):
+            if not (math.isfinite(value) and 0.0 < value < 1.0):
+                raise ShapeError(f"{name} must be between 0 and 1, got {value!r}")
+        _one_of("target tier", self.target_tier, TIERS)
+        _one_of("keep tier", self.keep_tier, TIERS)
+        _one_of("growth band", self.growth_band, get_args(GrowthBand))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LearnerParams:
+    """One version of the student model's shared parameters (v3, table learner_params;
+    design 3.6): the prior, a refit (adopted or not, with its report) or a reset. `params`
+    is the JSON of core.learner.SharedParams; exactly one version is current."""
+
+    version: str
+    created_at: int = 0
+    params: JsonObject = field(default_factory=dict)
+    source: ParamsSource = "prior"
+    report: JsonObject | None = None
+    current: bool = False
+
+    def __post_init__(self) -> None:
+        _nonempty("parameter version", self.version)
+        _one_of("parameter source", self.source, get_args(ParamsSource))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SectionState:
     section_id: str
     state: SectionStateName
@@ -807,6 +873,16 @@ class Attempt:
     state_before: JsonObject | None = None
     state_after: JsonObject | None = None
     voided_by: int | None = None
+    # v3 (wave 2): what the planner chose and the learner used. None for flashcards and
+    # for attempts logged before v3.
+    role: PlanRole | None = None
+    milestone: MilestoneName | None = None
+    missed: bool | None = None  # missed-milestone catch-up work
+    plan_p: float | None = None  # the calibrated prediction when the item was chosen
+    ladder: int | None = None  # the stuck-ladder rung, 0-2
+    sitting: str | None = None  # the certification sitting's id
+    learner_version: str | None = None  # the parameter version that made plan_p
+    valid_minutes: float | None = None  # a correct first try's valid solving time
 
     def __post_init__(self) -> None:
         _nonempty("card id", self.card_id)
@@ -824,6 +900,14 @@ class Attempt:
         _unit_interval("predicted recall", self.predicted_recall)
         for name in ("active_ms", "solve_ms", "entry_ms", "raw_ms", "capped_ms", "hints_used"):
             _nonneg(name, getattr(self, name))
+        if self.role is not None:
+            _one_of("role", self.role, get_args(PlanRole))
+        if self.milestone is not None:
+            _one_of("milestone", self.milestone, get_args(MilestoneName))
+        _unit_interval("plan p", self.plan_p)
+        if self.ladder is not None:
+            _one_of("ladder rung", self.ladder, LADDER_RUNGS)
+        _positive("valid minutes", self.valid_minutes)
 
     @property
     def strict_ok(self) -> bool | None:

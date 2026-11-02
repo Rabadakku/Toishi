@@ -4,12 +4,12 @@ the test asks: os._exit skips every exit handler, like Cmd+Q or a crash.
 
     python -m tests.storage.fault_child <mode> <profile dir> [extra]
 
-The v2-* modes run the real v1 -> v2 migration step through Storage.open (backup hook
-first) on a v1 user.db the test put there. SQLite's progress handler, set on the migration
-connection inside the step and called at every VM instruction (SQLite restarts its own
-countdown at each statement, so the count is kept here), counts the step's instructions
-(v2-count), kills the process at instruction n (v2-die n), or slows the step down for a
-SIGKILL from outside (v2-slow).
+The vN-* modes run the real migration step to vN (v2: v1 -> v2, v3: v2 -> v3) through
+Storage.open (backup hook first) on a user.db the test put there. SQLite's progress handler,
+set on the migration connection inside the step and called at every VM instruction (SQLite
+restarts its own countdown at each statement, so the count is kept here), counts the step's
+instructions (vN-count), kills the process at instruction n (vN-die n), or slows the step
+down for a SIGKILL from outside (vN-slow).
 """
 
 import os
@@ -52,27 +52,39 @@ def commit_some(storage: Storage, count: int) -> int:
     return done + count
 
 
-def migrate_v2(mode: str, paths: ProfilePaths, args: list[str]) -> None:
-    real = MIGRATIONS[1]
-    assert real.version == 2
-    die_at = int(args[0]) if mode == "v2-die" else 0
+def migrate_step(mode: str, paths: ProfilePaths, args: list[str]) -> None:
+    version, _, how = mode.partition("-")
+    real = MIGRATIONS[int(version.removeprefix("v")) - 1]
+    die_at = int(args[0]) if how == "die" else 0
     ticks = [0]
 
     def tick() -> int:
         ticks[0] += 1
         if ticks[0] == die_at:
             os._exit(9)
-        if mode == "v2-slow":
+        if how == "slow":
             time.sleep(0.0002)
         return 0
 
     def watched(conn: sqlite3.Connection) -> None:
-        if mode == "v2-slow":
+        if how == "slow":
             say("migrating")
         conn.set_progress_handler(tick, 1)
         real.apply(conn)
 
-    steps = (*MIGRATIONS[:1], replace(real, apply=watched), *MIGRATIONS[2:])
+    def unwatched(step: Migration) -> Migration:
+        """The step after the watched one: the count ends where it begins, so it covers the
+        watched step through its commit and nothing of the next step."""
+
+        def apply(conn: sqlite3.Connection) -> None:
+            conn.set_progress_handler(None, 1)
+            step.apply(conn)
+
+        return replace(step, apply=apply)
+
+    index = real.version - 1
+    later = [unwatched(m) if i == 0 else m for i, m in enumerate(MIGRATIONS[index + 1 :])]
+    steps = (*MIGRATIONS[:index], replace(real, apply=watched), *later)
     real_open = Database.open
 
     def open_watched(path: Path, **kwargs: object) -> Database:
@@ -87,8 +99,8 @@ def migrate_v2(mode: str, paths: ProfilePaths, args: list[str]) -> None:
 def main() -> None:
     mode, root = sys.argv[1], Path(sys.argv[2])
     paths = ProfilePaths(root)
-    if mode.startswith("v2-"):
-        migrate_v2(mode, paths, sys.argv[3:])
+    if mode.startswith(("v2-", "v3-")):
+        migrate_step(mode, paths, sys.argv[3:])
         return
     storage = Storage.open(paths, create=not paths.user_db.exists())
     say("ready")

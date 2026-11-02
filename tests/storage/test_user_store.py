@@ -1,5 +1,6 @@
 import sqlite3
 from dataclasses import fields, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from core.model import (
     Card,
     CardMark,
     CardRevision,
+    CourseSetup,
     Dispute,
     Exam,
     GradedAnswer,
@@ -223,6 +225,37 @@ def test_goals_exams_sections_and_marks(storage: Storage, clock: FixedClock) -> 
     assert mark.suspended
     with pytest.raises(ValueError, match="new exam"):
         users.add_exam(replace(exam, id=5))
+
+
+def test_course_setups_and_the_attempt_log_key(storage: Storage, clock: FixedClock) -> None:
+    """v3 storage helpers: a course's setup round-trips (stamped on write); the log key moves
+    with new answers and with voids; rows after an id; each course's source pack."""
+    users = storage.users
+    setup = users.set_course_setup(
+        CourseSetup(
+            course_id="calc1",
+            aligned_deck="Calculus I::1 Limits::1.1 Intro",
+            aligned_day=date(2026, 9, 3),
+            pace_factor=1.25,
+            accuracy_target=0.85,
+            growth_band="hard",
+        )
+    )
+    assert setup.updated_at == clock.now_ms()
+    assert users.course_setup("calc1") == setup
+    assert users.course_setups() == [setup]
+    assert users.course_setup("nope") is None
+    assert users.attempt_log_key() == (0, 0)
+    first = users.record_answer(GradedAnswer(attempt=Attempt(card_id="c1", verdict="correct")))
+    second = users.record_answer(GradedAnswer(attempt=Attempt(card_id="c2", verdict="correct")))
+    assert users.attempt_log_key() == (second.id, 0)
+    assert [a.id for a in users.attempts(after_id=first.id)] == [second.id]
+    users.undo_last_answer()
+    assert users.attempt_log_key() == (first.id, 1)
+    assert users.attempts(after_id=first.id) == []
+    assert storage.packs.course_sources() == {
+        c.id: data.PACK_INFO.id for c in storage.packs.courses()
+    }
 
 
 def test_record_answer_validates_its_input(storage: Storage) -> None:
