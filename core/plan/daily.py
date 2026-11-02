@@ -207,19 +207,24 @@ def plan_day[S](
                 tail = [mixed[move], *tail]
                 mixed = mixed[:move] + mixed[move + 1 :]
                 continue
-        if cap is not None and len(served_items) + len(result.items) > cap:
-            # Re-plans never add items (wave 2): the lowest-priority items give way.
-            if tail:
-                tail = tail[:-1]
-                continue
-            if mixed:
-                mixed = mixed[:-1]
-                continue
-            if sitting:
+        excess = 0 if cap is None else len(served_items) + len(result.items) - cap
+        if excess > 0:
+            # Re-plans never add items (wave 2): the lowest-priority items give way, the
+            # overflow's last first, then the mixed set's last (its last round-robin round),
+            # then a sitting not yet started, its last-batched skill.
+            before = len(tail) + len(mixed) + len(sitting)
+            cut = min(excess, len(tail))
+            tail = tail[: len(tail) - cut]
+            excess -= cut
+            cut = min(excess, len(mixed))
+            mixed = mixed[: len(mixed) - cut]
+            excess -= cut
+            if excess > 0 and sitting:
                 last = builder.last_sitting_skill()
                 sitting = [i for i in sitting if i.skill_id != last]
                 builder.drop_sitting_skill(last)
-                continue
+            if len(tail) + len(mixed) + len(sitting) < before:
+                continue  # order what is left (its checks follow the shorter day)
         break
     hours, basis = hours_to_keep_pace(ctx, spent_minutes or {})
     in_tail = {id(i) for i in tail}
