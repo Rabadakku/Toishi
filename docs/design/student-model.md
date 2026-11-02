@@ -8,6 +8,9 @@
   - refits on evidence rather than every 14 days.
 
   The conjunctive product is kept for now: it underpredicts multi-skill items in both datasets, whose skill tags overlap. The content rule now requires distinct components, and calibration by component count is checked on our own data (6.4).
+- v1.3 (2026-11-02): certification counts accuracy only, and pace is checked by the M2 and M3 sittings against an exam-style block time (3.7).
+  - v1.2 counted an M2 or M3 success only when its time was also at or under T*. With σ_T ≈ 0.45, a 0.90 posterior then needs a median near 0.5·T*, which contradicts the pace definition in 3.3.
+  - It also revoked a passed sitting at once.
 - Supersedes: where they conflict, the skill-level FSRS design in spec ENG-1 to ENG-19 and QUE-1 to QUE-24 (ADR-0020 records this, per DEV-17), and the earlier proposal on branch engine-design (`docs/design/learning-engine.md`), whose simulator stays as background.
 - Research: `docs/research/notes/Student model design/` (six notes), plus the earlier notes they cite.
 - Evidence grades:
@@ -137,7 +140,7 @@ pace_ok  ⇔  median_j ≤ T*_j
 - **Alternatives** to offer the owner on the course page: P(T ≤ 1.3·T*) ≥ 0.9, or a 6-problem set finished within its summed T* with probability 0.9, which needs a median of about 0.72·T*. **C**.
 - **Updates:**
   - τ_s are per-skill offsets (prior N(0, 0.3²), shrunk toward 0 with κ = 5).
-  - α is fixed at 0.3 (Delaney et al. 1998: power slopes 0.25–0.54 in mental arithmetic; **C** here).
+  - α is fixed at 0.05 (audit #14: 0.036 in Statics and 0.030 in EdNet after item and student effects; Delaney et al. 1998's 0.25–0.54 is for repeating identical problems). **B**.
   - τ and σ_T are updated by conjugate normal regression on correct first tries with valid time.
 - **No speed forgetting in v1.** Speed decays less than accuracy in skill-decay data (Arthur et al. 1998, by task type; **C**).
 
@@ -220,14 +223,20 @@ The component FSRS weights are **not** refit in v1. A refit needs a soft-label f
 ### 3.7 Certification (direct evidence)
 
 For skill s and tier ℓ, keep a Beta posterior over s's first-try success at tier ℓ:
-- **Evidence:** first tries on problems whose main skill is s at tier ℓ, from any role. For M2 and M3, "success" also requires time ≤ T*_j.
+- **Evidence:** first tries on problems whose main skill is s at tier ℓ, from any role, sittings included. A correct first try is a success at every tier; time does not enter the posterior (v1.3).
 - **Weighting:** each attempt is weighted by 2^(−age/30 days), so evidence fades and a lapse shows.
 - **Prior:** Beta(κ0·p̂, κ0·(1 − p̂)), where p̂ is the model's calibrated prediction for a representative problem and κ0 = 4.
 
-**Certified** when the posterior mean ≥ the accuracy target and the effective direct observations reach 3 (M1) or 4 (M2, M3).
+**M1 and Keep are certified** when the posterior mean ≥ the accuracy target and the effective direct observations reach 3.
 - *Basis:* mastery criteria based on 3–5 correct answers differ little in retention. In the ALEKS randomized threshold trial, 5 vs 3 changed retention by about 0.02 at 30% more time (Matayoshi et al. 2025, **A**). N-consecutive-correct and EMA thresholds perform close to model-based ones (Pelánek & Řihák 2017, **B**).
 
-**Revoked** when the posterior mean falls below target − 0.10 (hysteresis). The skill then returns to growth at that tier.
+**M2 and M3 are certified only by a sitting**, a closed-book timed block of unseen problems (`wave2-planner.md` §2). The skill passes when:
+- every one of its sitting problems is correct on the first try, unaided;
+- the total active time of those problems is at or under the sum of their T*. This is an exam's rule: a block of problems in the block's time.
+
+A sitting is planned only when the model gives the skill at least a 0.5 chance of passing it, on the chosen problems (product of their P_j, times the chance that the summed lognormal times fit the limit). A student whose median is 0.8·T* (σ_T 0.45) fits 3 problems in their time about 68% of the time; at a median of T*, about 36%.
+
+**Revoked** when the posterior mean falls below target − 0.10 (hysteresis). The skill then returns to growth at that tier. Pace is not revoked: speed decays less than accuracy (3.3).
 
 **Level** = the highest ℓ such that every tier ℓ′ ≤ ℓ that has problems is certified (critique 17).
 
@@ -344,11 +353,15 @@ Items are interleaved across skills. There are no two consecutive items of one s
 - *Basis:* interleaved math beat blocked (Rohrer & Taylor 2007: 63% vs 20%; classroom RCT d = 0.83, Rohrer et al. 2020; meta-analysis g = 0.34 for math, Brunmair & Richter 2019). **A** for mixing.
 - The discrimination mechanism is contested (Rowlandson & Simpson 2024 null). **B** for the adjacency rule.
 
-### 4.6 After a miss
-- The full worked solution is always shown (high-information feedback d = 0.99 vs 0.46 for corrective; Wisniewski et al. 2020, **B**).
-- A matched wrong answer adds its short feedback. Error-specific remediation was not clearly better than reteaching (Sleeman et al. 1989), so it stays short.
-- A miss that was mostly execution (top suspect m < 0.5) gives the skill one more problem later in the session.
-- The next-day review follows from the forecast.
+### 4.6 After a miss (v1.3: the owner's unassisted design, `wave2-planner.md`)
+- **Within the problem.** A wrong answer shows "Not quite" and the student may retry any number of times. Only the first try is evidence. There are no hints and no explanations.
+- **Give up** shows the full worked solution and counts as a miss.
+  - Basis: high-information feedback beats corrective feedback (d = 0.99 vs 0.46; Wisniewski et al. 2020, **B**).
+  - Elaborated feedback helps after an incorrect first response and not after a correct one (Attali & van der Kleij 2017, N = 2,445, **B**).
+  - Feedback that comes before the student's own attempt hurts later unassisted performance (Shute 2008; Bastani et al. 2025), **B**.
+- **A matched wrong answer's** short feedback is shown only with the solution, never during retries. Error-specific remediation was not clearly better than reteaching (Sleeman et al. 1989), so it stays short.
+- **Across problems,** the stuck ladder changes the problem rather than explaining (`wave2-planner.md` §1): a smaller problem, then a prerequisite, then the skill is set aside until the next study day.
+- **The next-day review** follows from the forecast. A delayed review after an error is what made immediate feedback pay in Attali & van der Kleij 2017.
 
 ### 4.7 Placement (optional)
 Placement asks problems that contain the most uncertain components in isolation (tier 1–2 first), up to 15 per chapter. Its answers are ordinary observations. Stopping on a variance threshold was dropped (critique 4). **C**.
@@ -428,7 +441,7 @@ The student can enter exam scores, and the app compares them with readiness for 
 | Minutes per step, Calc I | 1.5 (+0.5 to read) | C |
 | Milestones | +5 / +14 / +28 days (changed 2026-11-02 from +7 / +21 / +35, from syllabus data); exams pull M2 to exam − 2 | B, B, C |
 | Keep after the course | 0.80 at tier 3 | Existing LIB-8 |
-| Certification | κ0 = 4; n_eff ≥ 3 (M1) / 4 (M2, M3); half-life 30 days; revoke at target − 0.10 | B (thresholds), C (values) |
+| Certification | κ0 = 4; n_eff ≥ 3 (M1, Keep); M2 and M3 by sitting (planned at a predicted pass chance ≥ 0.5; all correct, block time ≤ ΣT*); half-life 30 days; revoke at target − 0.10 | B (thresholds), C (values) |
 | Growth allowance | 3 per skill per day; stop after 2 consecutive successes | C (direction A) |
 | New skill block | worked example + up to 3 until a success | B |
 | Reference checks | every 10th item | B |
@@ -517,8 +530,8 @@ class SharedParams:
     tau: float
     sigma_t: float
     gamma: float = 0.37
-    rho: float = 0.10
-    alpha: float = 0.3
+    rho: float = 0.0  # v1.2 (audit #3)
+    alpha: float = 0.05  # v1.2 (audit #14)
     q_drift: float = 0.01
     kappa: float = 0.95
     same_day_weight: float = 0.25

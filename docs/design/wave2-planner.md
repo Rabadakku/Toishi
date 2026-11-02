@@ -23,7 +23,7 @@ Per skill, per study day, counted over the skill's own items: items whose `skill
 - A ladder item **replaces** the skill's next planned item. It never adds one. With rung 3 the day loses items. So the day's count stays at or under its first plan: this fixes the 6.2 gate "daily items never exceed the plan".
 - **The first plan holds every slot.** It includes each skill's full growth allowance (up to 3), so a re-plan only removes or substitutes. Where the planner now adds items after a miss, it must reserve them at the start instead.
 - A ladder item's outcome counts like any other first try: certification evidence at its tier, and a learner update.
-- The struggling state (status.py) stays for the cross-day case: 10 or more first tries on a skill without M1. Its prerequisites get growth.
+- The struggling state (status.py) stays as built for the cross-day case: 3 study days at the full growth allowance with no rise in the direct posterior. Its prerequisites get growth.
 
 ## 2. Certification sittings for M2 and M3
 
@@ -33,15 +33,21 @@ Practice first tries keep feeding the model and the certifier's posterior, but *
   - its current milestone is M2 or M3;
   - the model's calibrated readiness at the milestone tier (`readiness`) is at least the target;
   - it has at least 2 practice first tries at that tier, with the last one a success;
-  - it has had no failed sitting in the last 2 study days.
+  - it has had no failed sitting in the last 2 study days;
+  - the model gives it a pass chance of at least 0.5 (`SITTING_PASS_MIN`, grade C) on the chosen problems (v1.3):
+    - P_pass is the product of their calibrated P_j, times P(sum of times ≤ sum of T*);
+    - the time part uses a Fenton–Wilkinson lognormal approximation from each problem's predicted median and σ_T;
+    - below the threshold the skill stays in growth, and `DayPlan.notes` says it is not yet at pace (once per skill per day).
 
   Due skills are batched into one sitting per day, at most 3 skills, earliest deadline first. A sitting is never planned in the first 20 minutes of a session's expected time, so practice warms up first.
 - **What.** For each skill, 2 problems at the milestone tier that the student has never been served (any role), from different families; 3 if the skill's pool allows.
   - The problems are served consecutively as one block, in random order across skills, `role="sitting"`, with `sitting` set to a per-day id.
-  - Each problem's time limit is its standard time T*. The time is shown, but the attempt isn't cut off.
-- **Pass.** Every problem of the skill is correct on the first try, unaided, and within its T*. The milestone certifies on that day.
+  - Each skill's time limit is the sum of its problems' standard times T*, like an exam's block of problems (v1.3; v1.2 had a limit per problem). The limit and the elapsed time are shown, but nothing is cut off.
+- **Pass.** Every problem of the skill is correct on the first try and unaided, and the skill's total valid active time is at or under its limit. The milestone certifies on that day.
   - The certifier records the pass: certify.py reads `role == "sitting"` observations for M2 and M3.
-  - Revocation is unchanged: the recency-weighted posterior over all evidence at the tier falling below target − 0.10.
+  - The certifier's posteriors count accuracy only (v1.3): a correct first try is a success whatever its time. v1.2 also required each M2/M3 success to be within T*, which needed a median near 0.5·T* and revoked a passed sitting at once.
+  - Revocation is unchanged: the recency-weighted accuracy posterior over all evidence at the tier falling below target − 0.10.
+- **Unknown time.** If every answer is correct but a problem has no valid time (a long pause, a Mac wake), the sitting is void for that skill: no pass, no fail, and a new sitting may come the next study day without the 2-day wait.
 - **Fail.** The skill goes back to growth at that tier, and the 2-day wait applies. A failed sitting's problems count as practice evidence.
 - **No pool.** If too few unseen problems remain at the tier, the sitting uses the least recently served ones, and `DayPlan.notes` says the pool is thin.
 - **Logging.** The sitting's items carry `milestone` and `tier`, and the plan logs which skills sat (`DayPlan.sittings`).
