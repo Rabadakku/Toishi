@@ -1,0 +1,11 @@
+V1 interval (1,inf) vars=(sigma,) | sigma > 1      -> correct        370 ms    {}
+V2 interval (1,inf) vars=(sigma,) | x > 1          -> invalid          0 ms  x isn't a variable in this problem.  {}
+V3 interval (1,inf) vars=(sigma,) | t > 1          -> invalid          0 ms  t isn't a variable in this problem.  {}
+V4 interval (1,inf) no vars | t > 1                -> correct          1 ms    {}
+V5 interval (1,inf) no vars | (1, inf)             -> correct          1 ms    {}
+V6 interval (1,inf) no vars | x > 1 and y > 1      -> correct          1 ms    {}
+V7 interval (1,inf) no vars | x > 1 or t < 0       -> incorrect        1 ms    {}
+V8 expr e^(2x) | e^2x                              -> incorrect        6 ms    {}
+V9 expr e^(2x) | e^(2x)                            -> correct         26 ms    {}
+V10 expr e^(2x) | (e^2)*x                          -> incorrect        4 ms    {}
+V11 expr (e^2)*x | e^2x                            -> correct          1 ms    {}

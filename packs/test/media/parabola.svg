@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-3 -3 6 6" width="240" height="240" role="img" aria-label="The parabola y = x^2 - 1">
+  <g transform="scale(1,-1)" fill="none" stroke-width="0.04">
+    <line x1="-3" y1="0" x2="3" y2="0" stroke="#888"/>
+    <line x1="0" y1="-3" x2="0" y2="3" stroke="#888"/>
+    <path d="M -2 3 Q 0 -5 2 3" stroke="#2563eb"/>
+  </g>
+</svg>

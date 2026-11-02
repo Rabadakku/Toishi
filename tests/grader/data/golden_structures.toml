@@ -1,0 +1,955 @@
+# Golden cases (MATH-11): equations, antiderivatives, sets, lists, intervals, points,
+# vectors, matrices and forms.
+
+[[group]]
+name = "line"
+type = "equation"
+key = "y = 2x + 1"
+cases = [
+  ["y = 2x + 1", "correct"],
+  ["2x - y + 1 = 0", "correct"],
+  ["y - 1 = 2x", "correct"],
+  ["2y = 4x + 2", "correct"],
+  ["y/2 = x + 1/2", "correct"],
+  ["-y = -2x - 1", "correct"],
+  ["y = 2x - 1", "incorrect"],
+  ["y = x + 1", "incorrect"],
+  ["x = (y-1)/2", "correct"],
+  ["2x + 1 = y", "correct"],
+  ["y - 2x - 1 = 1", "incorrect"],
+  ["0 = 0", "incorrect"],
+  ["2x + 1", "invalid"],
+  ["y = 2x + 1 = 3", "invalid"],
+  ["y < 2x + 1", "invalid"],
+  ["y = 2x + 1.0", "correct"],
+  ["y = 2.001x + 1", "incorrect"],
+]
+
+[[group]]
+name = "circle"
+type = "equation"
+key = "x^2 + y^2 = 25"
+cases = [
+  ["y^2 + x^2 = 25", "correct"],
+  ["x^2 + y^2 - 25 = 0", "correct"],
+  ["25 = x^2 + y^2", "correct"],
+  ["x^2 + y^2 = 5", "incorrect"],
+  ["y = sqrt(25 - x^2)", "incorrect"],
+  ["2x^2 + 2y^2 = 50", "correct"],
+  ["(x^2+y^2)/25 = 1", "correct"],
+  ["x^2 - y^2 = 25", "incorrect"],
+]
+
+[[group]]
+name = "cleared denominators"
+type = "equation"
+key = "x = 2y"
+cases = [
+  ["x/y = 2", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["x - 2y = 0", "correct"],
+  ["y = x/2", "correct"],
+  ["y = 2x", "incorrect"],
+  ["x/2 = y", "correct"],
+  ["y/x = 2", "incorrect"],
+]
+
+[[group]]
+name = "horizontal line"
+type = "equation"
+key = "y = 3"
+opts = { vars = ["x", "y"] }
+cases = [
+  ["3 = y", "correct"],
+  ["2y = 6", "correct"],
+  ["y - 3 = 0", "correct"],
+  ["y = -3", "incorrect"],
+  ["x = 3", "incorrect"],
+  ["y = 3 + 0*x", "correct"],
+]
+
+[[group]]
+name = "point-slope form"
+type = "equation"
+key = "y - 2 = 3(x - 1)"
+cases = [
+  ["y = 3x - 1", "correct"],
+  ["y = 3x + 1", "incorrect"],
+  ["3x - y - 1 = 0", "correct"],
+  ["y - 2 = 3x - 3", "correct"],
+]
+
+[[group]]
+name = "shifted circle"
+type = "equation"
+key = "(x-1)^2 + (y+2)^2 = 9"
+cases = [
+  ["x^2 - 2x + 1 + y^2 + 4y + 4 = 9", "correct"],
+  ["x^2 + y^2 - 2x + 4y - 4 = 0", "correct"],
+  ["(x+1)^2 + (y-2)^2 = 9", "incorrect"],
+  ["(x-1)^2 + (y+2)^2 = 3", "incorrect"],
+]
+
+[[group]]
+name = "one-variable equation"
+type = "equation"
+key = "x = 4"
+cases = [
+  ["4 = x", "correct"],
+  ["2x = 8", "correct"],
+  ["x - 4 = 0", "correct"],
+  ["x^2 = 16", "incorrect"],
+  ["x = -4", "incorrect"],
+]
+
+[[group]]
+name = "ratio test limits (by design: equivalent only up to a constant factor)"
+type = "equation"
+key = "y = e^x"
+cases = [
+  ["e^x = y", "correct"],
+  ["2y = 2e^x", "correct"],
+  ["ln(y) = x", "incorrect"],
+]
+
+[[group]]
+name = "power rule antiderivative"
+type = "antiderivative"
+key = "x^3/3 + C"
+cases = [
+  ["x^3/3", "correct"],
+  ["x^3/3 + C", "correct"],
+  ["x^3/3 + 5", "correct"],
+  ["(x^3 + 1)/3", "correct"],
+  ["x^3/3 + K", "correct"],
+  ["x^3", "incorrect"],
+  ["x^2", "incorrect"],
+  ["x^3/3 + C*x", "incorrect"],
+  ["3x^2", "incorrect"],
+  ["x^4/4", "incorrect"],
+  ["1/3x^3 + C", "correct"],
+  ["x^3/3 + c", "correct"],
+  ["C + x^3/3", "correct"],
+  ["x^3/3 + D", "invalid"],
+  ["x^3/3 + C^2", "correct"],
+  ["(x + C)^3/3", "incorrect"],
+]
+
+[[group]]
+name = "constant required"
+type = "antiderivative"
+key = "x^3/3 + C"
+opts = { require_constant = true }
+cases = [
+  ["x^3/3", "incorrect"],
+  ["x^3/3 + C", "correct"],
+  ["x^3/3 + K", "correct"],
+  ["C + x^3/3", "correct"],
+  ["x^3/3 + 2", "incorrect"],
+  ["x^3/3 + 2 + C", "correct"],
+  ["x^2 + C", "incorrect"],
+]
+
+[[group]]
+name = "log antiderivative"
+type = "antiderivative"
+key = "ln|x| + C"
+cases = [
+  ["ln|x|", "correct"],
+  ["ln(x)", "incorrect"],
+  ["ln|2x|", "correct"],
+  ["ln(|x|) + 7", "correct"],
+  ["ln(x^2)/2", "correct"],
+  ["log(|x|)", "incorrect"],
+  ["-ln(1/|x|)", "correct"],
+  ["ln|x|+C", "correct"],
+  ["1/x", "incorrect"],
+]
+
+[[group]]
+name = "log antiderivative for positive x"
+type = "antiderivative"
+key = "ln|x| + C"
+opts = { domain = "x > 0" }
+cases = [
+  ["ln(x)", "correct"],
+  ["ln(x) + C", "correct"],
+  ["ln(2x)", "correct"],
+]
+
+[[group]]
+name = "sine antiderivative"
+type = "antiderivative"
+key = "-cos(x) + C"
+cases = [
+  ["-cos(x)", "correct"],
+  ["cos(x)", "incorrect"],
+  ["1 - cos(x)", "correct"],
+  ["-cos(x) + 2pi", "correct"],
+  ["2sin(x/2)^2", "correct"],
+  ["sin(x)", "incorrect"],
+  ["-sin(x)", "incorrect"],
+  ["cos(x + pi)", "correct"],
+]
+
+[[group]]
+name = "exponential antiderivative"
+type = "antiderivative"
+key = "e^x + C"
+cases = [
+  ["e^x", "correct"],
+  ["e^x + 1", "correct"],
+  ["e^(x+1)", "incorrect"],
+  ["e^x*e", "incorrect"],
+  ["xe^x", "invalid"],
+  ["exp(x) + C", "correct"],
+]
+
+[[group]]
+name = "arctangent antiderivative"
+type = "antiderivative"
+key = "arctan(x) + C"
+cases = [
+  ["arctan(x)", "correct"],
+  ["-arctan(1/x)", "incorrect"],  # review: false accept (hole: undefined where the key is defined) at 0
+  ["arctan(x) + pi", "correct"],
+  ["arccot(x)", "incorrect"],
+  ["-arccot(x)", "correct"],
+  ["arcsin(x/sqrt(1+x^2))", "correct"],
+]
+
+[[group]]
+name = "squared sine antiderivative"
+type = "antiderivative"
+key = "sin(x)^2/2 + C"
+cases = [
+  ["-cos(x)^2/2", "correct"],
+  ["-cos(2x)/4", "correct"],
+  ["sin(x)^2", "incorrect"],
+  ["sin(x)^2/2", "correct"],
+]
+
+[[group]]
+name = "integration by parts"
+type = "antiderivative"
+key = "x*ln(x) - x + C"
+cases = [
+  ["x(ln(x) - 1)", "correct"],
+  ["x*ln(x)", "incorrect"],
+  ["x*ln|x| - x", "correct"],
+  ["ln(x^x) - x", "correct"],
+  ["x*ln(x) - x + 1", "correct"],
+]
+
+[[group]]
+name = "root antiderivative"
+type = "antiderivative"
+key = "2sqrt(x) + C"
+cases = [
+  ["sqrt(4x)", "correct"],
+  ["2x^(1/2)", "correct"],
+  ["sqrt(x)", "incorrect"],
+  ["2sqrt(x) + 3", "correct"],
+  ["x^(1/2)/2", "incorrect"],
+]
+
+[[group]]
+name = "reciprocal antiderivative"
+type = "antiderivative"
+key = "-1/x + C"
+cases = [
+  ["-1/x", "correct"],
+  ["1/x", "incorrect"],
+  ["-x^(-1)", "correct"],
+  ["(x-1)/x", "correct"],
+  ["-1/x^2", "incorrect"],
+]
+
+[[group]]
+name = "substitution antiderivative"
+type = "antiderivative"
+key = "(x+1)^4/4 + C"
+cases = [
+  ["(x+1)^4/4", "correct"],
+  ["x^4/4 + x^3 + 3x^2/2 + x", "correct"],
+  ["(x+1)^4", "incorrect"],
+  ["(x+1)^5/5", "incorrect"],
+  ["(x+1)^4/4 + 1/4", "correct"],
+]
+
+[[group]]
+name = "antiderivative in t"
+type = "antiderivative"
+key = "t^2/2 + C"
+cases = [
+  ["t^2/2", "correct"],
+  ["(t^2 + 1)/2", "correct"],
+  ["x^2/2", "invalid"],
+  ["t^2", "incorrect"],
+]
+
+[[group]]
+name = "critical numbers"
+type = "set"
+key = "-1, 0, 1"
+opts = { wrong = "0, 1 => x + 1 = 0 gives a critical number too @3" }
+cases = [
+  ["-1, 0, 1", "correct"],
+  ["1, 0, -1", "correct"],
+  ["{-1, 0, 1}", "correct"],
+  ["0, 1", "incorrect"],
+  ["-1, 0, 1, 2", "incorrect"],
+  ["1, -1, 0", "correct"],
+  ["-1,0,1", "correct"],
+  ["-1, 1, 0, 0", "correct"],
+  ["x = -1, 0, 1", "invalid"],
+  ["none", "incorrect"],
+  ["(-1, 0, 1)", "invalid"],
+  ["-1; 0; 1", "invalid"],
+  ["-1, 0, 1.0", "correct"],
+  ["-1 0 1", "invalid"],
+]
+
+[[group]]
+name = "empty set"
+type = "set"
+key = "none"
+cases = [
+  ["none", "correct"],
+  ["{}", "correct"],
+  ["∅", "correct"],
+  ["0", "incorrect"],
+  ["empty", "correct"],
+  ["DNE", "incorrect"],
+  ["None", "correct"],
+]
+
+[[group]]
+name = "two roots"
+type = "set"
+key = "2, 3"
+cases = [
+  ["3, 2", "correct"],
+  ["6/3, sqrt(9)", "correct"],
+  ["2.0, 3.0", "correct"],
+  ["2, 3.001", "correct"],
+  ["2, 3.01", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["2", "incorrect"],
+  ["2, 3, 3", "correct"],
+]
+
+[[group]]
+name = "plus or minus root two"
+type = "set"
+key = "-sqrt(2), sqrt(2)"
+cases = [
+  ["sqrt(2), -sqrt(2)", "correct"],
+  ["±sqrt(2)", "invalid"],
+  ["-1.414, 1.414", "correct"],
+  ["sqrt(2)", "incorrect"],
+  ["-2^(1/2), 2^(1/2)", "correct"],
+  ["-1.41, 1.41", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+]
+
+[[group]]
+name = "angles in a set"
+type = "set"
+key = "pi/6, 5pi/6"
+cases = [
+  ["5pi/6, pi/6", "correct"],
+  ["pi/6, 5*pi/6", "correct"],
+  ["0.5236, 2.618", "correct"],
+  ["pi/6", "incorrect"],
+  ["30, 150", "incorrect"],
+  ["pi/6, pi - pi/6", "correct"],
+]
+
+[[group]]
+name = "set of expressions"
+type = "set"
+key = "x, x^2"
+cases = [
+  ["x^2, x", "correct"],
+  ["x*x, x", "correct"],
+  ["x, x^3", "incorrect"],
+]
+
+[[group]]
+name = "ordered list"
+type = "list"
+key = "1, 2, 3"
+cases = [
+  ["1, 2, 3", "correct"],
+  ["3, 2, 1", "incorrect"],
+  ["1, 2", "incorrect"],
+  ["1, 2, 3, 4", "incorrect"],
+  ["{1, 2, 3}", "invalid"],
+  ["1, 4/2, sqrt(9)", "correct"],
+  ["1.0, 2.0, 3.0", "correct"],
+]
+
+[[group]]
+name = "list of limits"
+type = "list"
+key = "1, DNE, inf"
+cases = [
+  ["1, DNE, inf", "correct"],
+  ["1, inf, DNE", "incorrect"],
+  ["1, DNE, -inf", "incorrect"],
+  ["1, dne, infinity", "correct"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "union of rays"
+type = "interval"
+key = "(-inf, 0) U (2, inf)"
+opts = { vars = ["x"] }
+cases = [
+  ["(-inf, 0) U (2, inf)", "correct"],
+  ["(2, inf) U (-inf, 0)", "correct"],
+  ["x < 0 or x > 2", "correct"],
+  ["x > 2 or x < 0", "correct"],
+  ["(-inf, 0] U (2, inf)", "incorrect"],
+  ["(-inf, 0) U [2, inf)", "incorrect"],
+  ["(-inf, 2)", "incorrect"],
+  ["x < 0 and x > 2", "incorrect"],
+  ["(-inf,0)∪(2,∞)", "correct"],
+  ["(-inf, 0), (2, inf)", "invalid"],
+  ["(0, 2)", "incorrect"],
+  ["R", "invalid"],
+  ["0 > x or x > 2", "correct"],
+  ["(-inf, 0) U (2, inf) U (3, 4)", "correct"],
+  ["(-inf, -1) U [-1, 0) U (2, inf)", "correct"],
+  ["x^2 - 2x > 0", "invalid"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "either endpoint"
+type = "interval"
+key = "(-inf, 0) U (2, inf)"
+opts = { vars = ["x"], endpoints = "either" }
+cases = [
+  ["(-inf, 0] U [2, inf)", "correct"],
+  ["(-inf, 0] U (2, inf)", "correct"],
+  ["(-inf, 1) U (2, inf)", "incorrect"],
+  ["x <= 0 or x >= 2", "correct"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "half-open interval"
+type = "interval"
+key = "[-1, 3)"
+opts = { vars = ["x"] }
+cases = [
+  ["[-1, 3)", "correct"],
+  ["-1 <= x < 3", "correct"],
+  ["x >= -1 and x < 3", "correct"],
+  ["3 > x >= -1", "correct"],
+  ["(-1, 3)", "incorrect"],
+  ["[-1, 3]", "incorrect"],
+  ["-1 < x <= 3", "incorrect"],
+  ["[-1, 3) U [0, 1]", "correct"],
+  ["[-1, 1) U [1, 3)", "correct"],
+  ["[-1, 1) U (1, 3)", "incorrect"],
+  ["[−1,3)", "correct"],
+  ["[-1, 3", "invalid"],
+  ["[3, -1)", "incorrect"],
+  ["-1 <= x > 3", "invalid"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "all reals"
+type = "interval"
+key = "(-inf, inf)"
+opts = { vars = ["x"] }
+cases = [
+  ["(-inf, inf)", "correct"],
+  ["x > 0 or x <= 0", "correct"],
+  ["(-inf, 0) U [0, inf)", "correct"],
+  ["(-inf, 0) U (0, inf)", "incorrect"],
+  ["[-inf, inf]", "invalid"],
+  ["(inf, -inf)", "invalid"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "empty interval"
+type = "interval"
+key = "none"
+opts = { vars = ["x"] }
+cases = [
+  ["none", "correct"],
+  ["x < 0 and x > 0", "correct"],
+  ["{}", "correct"],
+  ["(0, 1)", "incorrect"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "irrational endpoint"
+type = "interval"
+key = "(0, pi)"
+opts = { vars = ["x"] }
+cases = [
+  ["(0, pi)", "correct"],
+  ["(0, 3.14159)", "incorrect"],
+  ["0 < x < pi", "correct"],
+  ["(0, 22/7)", "incorrect"],
+  ["(0, 4arctan(1))", "correct"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "root endpoints"
+type = "interval"
+key = "(-sqrt(2), sqrt(2))"
+opts = { vars = ["x"] }
+cases = [
+  ["(-2^(1/2), 2^(1/2))", "correct"],
+  ["-sqrt(2) < x < sqrt(2)", "correct"],
+  ["(-1.414, 1.414)", "incorrect"],
+  ["x^2 < 2", "invalid"],
+  ["(-sqrt(8)/2, sqrt(8)/2)", "correct"],
+  ["|x| < sqrt(2)", "invalid"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "finite set as interval answer"
+type = "interval"
+key = "{1, 2}"
+opts = { vars = ["x"] }
+cases = [
+  ["{2, 1}", "correct"],
+  ["x = 1 or x = 2", "correct"],
+  ["[1, 2]", "incorrect"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "all but one point"
+type = "interval"
+key = "(-inf, 1) U (1, inf)"
+opts = { vars = ["x"] }
+cases = [
+  ["x != 1", "correct"],
+  ["x ≠ 1", "correct"],
+  ["(-inf,1)U(1,inf)", "correct"],
+  ["(-inf, inf)", "incorrect"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "closed ray"
+type = "interval"
+key = "[0, inf)"
+opts = { vars = ["x"] }
+cases = [
+  ["x >= 0", "correct"],
+  ["0 <= x", "correct"],
+  ["[0, inf)", "correct"],
+  ["(0, inf)", "incorrect"],
+  ["x > 0", "incorrect"],
+  ["[0, ∞)", "correct"],
+  ["[0, inf]", "invalid"],
+  ["t >= 0", "invalid"],  # M7: t is not the declared variable (was correct)
+  ["x ≥ 0", "correct"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "either endpoint bounded"
+type = "interval"
+key = "(1, 5]"
+opts = { vars = ["x"], endpoints = "either" }
+cases = [
+  ["[1, 5]", "correct"],
+  ["(1, 5)", "correct"],
+  ["1 < x < 5", "correct"],
+  ["(1, 6]", "incorrect"],
+]
+
+[[group]]
+name = "inequality key"
+type = "interval"
+key = "x < 0 or x > 2"
+cases = [
+  ["(-inf, 0) U (2, inf)", "correct"],
+  ["x < 0 or x > 2", "correct"],
+  ["x <= 0 or x > 2", "incorrect"],
+]
+
+[[group]]
+name = "one point"
+type = "point"
+key = "(2, -4)"
+cases = [
+  ["(2, -4)", "correct"],
+  ["(2,-4)", "correct"],
+  ["(-4, 2)", "incorrect"],
+  ["(2, -4.0)", "correct"],
+  ["(4/2, -2^2)", "correct"],
+  ["2, -4", "invalid"],
+  ["[2, -4]", "invalid"],
+  ["(2, -4), (0, 0)", "incorrect"],
+  ["(2, -4, 0)", "incorrect"],
+  ["(2 -4)", "invalid"],
+]
+
+[[group]]
+name = "two points"
+type = "point"
+key = "(0, 0), (2, -4)"
+cases = [
+  ["(2, -4), (0, 0)", "correct"],
+  ["(0,0)", "incorrect"],
+  ["(0, 0), (2, -4), (1, 1)", "incorrect"],
+  ["(0, 0), (2, 4)", "incorrect"],
+  ["(0, 0), (2, -4), (0, 0)", "correct"],
+]
+
+[[group]]
+name = "point with decimals"
+type = "point"
+key = "(1, -2)"
+cases = [
+  ["(1.0, -2.0)", "correct"],
+  ["(1.01, -2)", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["(1, -2)", "correct"],
+]
+
+[[group]]
+name = "point with pi"
+type = "point"
+key = "(pi/2, 1)"
+cases = [
+  ["(1.5708, 1)", "correct"],
+  ["(pi/2, 1)", "correct"],
+  ["(90, 1)", "incorrect"],
+  ["(pi/2, sin(pi/2))", "correct"],
+]
+
+[[group]]
+name = "no points"
+type = "point"
+key = "none"
+cases = [
+  ["none", "correct"],
+  ["(0, 0)", "incorrect"],
+]
+
+[[group]]
+name = "vector"
+type = "vector"
+key = "<1, -2, 3>"
+cases = [
+  ["<1, -2, 3>", "correct"],
+  ["<1,-2,3>", "correct"],
+  ["(1, -2, 3)", "correct"],
+  ["<1, 2, 3>", "incorrect"],
+  ["<1, -2>", "incorrect"],
+  ["<3, -2, 1>", "incorrect"],
+  ["1, -2, 3", "invalid"],
+  ["<2/2, -4/2, sqrt(9)>", "correct"],
+  ["⟨1, -2, 3⟩", "correct"],
+  ["[1, -2, 3]", "invalid"],
+]
+
+[[group]]
+name = "vector function"
+type = "vector"
+key = "<cos(t), sin(t)>"
+cases = [
+  ["<cos(t), sin(t)>", "correct"],
+  ["<sin(t + pi/2), cos(t - pi/2)>", "correct"],
+  ["<sin(t), cos(t)>", "incorrect"],
+  ["<cos(t), sin(t), 0>", "incorrect"],
+]
+
+[[group]]
+name = "matrix"
+type = "matrix"
+key = "[[1, 2], [3, 4]]"
+cases = [
+  ["[[1,2],[3,4]]", "correct"],
+  ["[[1, 3], [2, 4]]", "incorrect"],
+  ["[[1, 2]]", "incorrect"],
+  ["[[1, 2], [3]]", "invalid"],
+  ["[1, 2, 3, 4]", "invalid"],
+  ["[[2/2, 2], [3, 2^2]]", "correct"],
+  ["[[1.0, 2], [3, 4]]", "correct"],
+  ["[[1, 2], [3, 4], [5, 6]]", "incorrect"],
+]
+
+[[group]]
+name = "rotation matrix"
+type = "matrix"
+key = "[[cos(t), -sin(t)], [sin(t), cos(t)]]"
+cases = [
+  ["[[cos(t), -sin(t)], [sin(t), cos(t)]]", "correct"],
+  ["[[cos(t), sin(t)], [-sin(t), cos(t)]]", "incorrect"],
+  ["[[cos(t), -sin(t)], [sin(t), cos(-t)]]", "correct"],
+]
+
+[[group]]
+name = "identity matrix"
+type = "matrix"
+key = "[[1, 0], [0, 1]]"
+cases = [
+  ["[[1,0],[0,1]]", "correct"],
+  ["[[0,1],[1,0]]", "incorrect"],
+]
+
+[[group]]
+name = "factored form"
+type = "expression"
+key = "(x-2)(x+2)"
+opts = { form = "factored" }
+cases = [
+  ["(x-2)(x+2)", "correct"],
+  ["(x+2)(x-2)", "correct"],
+  ["x^2-4", "incorrect"],
+  ["(x-2)*(x+2)", "correct"],
+  ["-(2-x)(x+2)", "correct"],
+  ["(x-2)(x+3)", "incorrect"],
+]
+
+[[group]]
+name = "fully factored"
+type = "expression"
+key = "x(x-1)(x+1)"
+opts = { form = "factored" }
+cases = [
+  ["x(x-1)(x+1)", "correct"],
+  ["x(x^2-1)", "incorrect"],
+  ["x^3 - x", "incorrect"],
+  ["(x^2 - x)(x + 1)", "incorrect"],
+  ["(x+1)x(x-1)", "correct"],
+]
+
+[[group]]
+name = "factored with a common factor"
+type = "expression"
+key = "2x(x+2)"
+opts = { form = "factored" }
+cases = [
+  ["2x(x+2)", "correct"],
+  ["2(x^2+2x)", "incorrect"],
+  ["2x^2+4x", "incorrect"],
+]
+
+[[group]]
+name = "irreducible is factored"
+type = "expression"
+key = "x^2 + 1"
+opts = { form = "factored" }
+cases = [
+  ["x^2+1", "correct"],
+  ["1 + x^2", "correct"],
+]
+
+[[group]]
+name = "repeated factor"
+type = "expression"
+key = "(x-1)^2"
+opts = { form = "factored" }
+cases = [
+  ["(x-1)^2", "correct"],
+  ["(x-1)(x-1)", "correct"],
+  ["x^2-2x+1", "incorrect"],
+  ["(1-x)^2", "correct"],
+]
+
+[[group]]
+name = "expanded form"
+type = "expression"
+key = "(x+1)^2"
+opts = { form = "expanded" }
+cases = [
+  ["x^2+2x+1", "correct"],
+  ["(x+1)^2", "incorrect"],
+  ["x(x+2)+1", "incorrect"],
+  ["1 + 2x + x^2", "correct"],
+  ["(x+1)(x+1)", "incorrect"],
+]
+
+[[group]]
+name = "expanded product"
+type = "expression"
+key = "(x+1)(x-2)"
+opts = { form = "expanded" }
+cases = [
+  ["x^2-x-2", "correct"],
+  ["(x+1)(x-2)", "incorrect"],
+  ["x(x-1)-2", "incorrect"],
+  ["-2 - x + x^2", "correct"],
+]
+
+[[group]]
+name = "expanded constant factor"
+type = "expression"
+key = "2(x+3)"
+opts = { form = "expanded" }
+cases = [
+  ["2x+6", "correct"],
+  ["2(x+3)", "incorrect"],
+  ["6+2x", "correct"],
+  ["-(-2x-6)", "incorrect"],
+]
+
+[[group]]
+name = "lowest terms"
+type = "number"
+key = "3/4"
+opts = { form = "lowest-terms" }
+cases = [
+  ["3/4", "correct"],
+  ["6/8", "incorrect"],
+  ["0.75", "incorrect"],  # review: false accept (lowest terms asks for a fraction; 0.3333 passed for 1/3)
+  ["-3/4", "incorrect"],
+  ["9/12", "incorrect"],
+]
+
+[[group]]
+name = "lowest terms expression"
+type = "expression"
+key = "(x+1)/2"
+opts = { form = "lowest-terms" }
+cases = [
+  ["(x+1)/2", "correct"],
+  ["(2x+2)/4", "incorrect"],
+  ["(x^2+2x+1)/(2x+2)", "incorrect"],
+  ["x/2 + 1/2", "correct"],
+]
+
+[[group]]
+name = "whole number in lowest terms"
+type = "number"
+key = "5"
+opts = { form = "lowest-terms" }
+cases = [
+  ["10/2", "incorrect"],
+  ["5", "correct"],
+  ["5/1", "incorrect"],
+]
+
+[[group]]
+name = "simplified form"
+type = "expression"
+key = "2x"
+opts = { form = "simplified" }
+cases = [
+  ["2x", "correct"],
+  ["x + x", "incorrect"],
+  ["2*x", "correct"],
+  ["4x/2", "incorrect"],
+  ["x*2", "correct"],
+  ["2x + 0", "incorrect"],
+  ["2x^1", "incorrect"],
+  ["3x - x", "incorrect"],
+]
+
+[[group]]
+name = "simplified rational"
+type = "expression"
+key = "x + 1"
+opts = { form = "simplified" }
+cases = [
+  ["(x^2-1)/(x-1)", "incorrect"],
+  ["x+1", "correct"],
+  ["1+x", "correct"],
+]
+
+[[group]]
+name = "simplified keeps other valid forms"
+type = "expression"
+key = "x^2 + 2x + 1"
+opts = { form = "simplified" }
+cases = [
+  ["(x+1)^2", "correct"],
+  ["x^2 + 2x + 1", "correct"],
+  ["x^2 + x + x + 1", "incorrect"],
+]
+
+[[group]]
+name = "exact form"
+type = "number"
+key = "1/3"
+opts = { form = "exact" }
+cases = [
+  ["1/3", "correct"],
+  ["0.3333", "incorrect"],
+  ["2/6", "correct"],
+]
+
+[[group]]
+name = "exact root"
+type = "number"
+key = "sqrt(2)"
+opts = { exact = true }
+cases = [
+  ["1.41421356", "incorrect"],
+  ["sqrt(2)", "correct"],
+  ["2^(1/2)", "correct"],
+]
+
+[[group]]
+name = "near-miss equation"
+type = "equation"
+key = "y = 2x + 1"
+cases = [
+  ["y = 2x + 1 + 10^(-45)", "incorrect"],
+  ["y = (2 + 10^(-50))x + 1", "incorrect"],
+  ["y = 2x + 1 + 0", "correct"],
+]
+
+[[group]]
+name = "near-miss elements"
+type = "set"
+key = "-1, 0, 1"
+cases = [
+  ["-1, 0, 1 + 10^(-45)", "incorrect"],
+  ["-1, 10^(-60), 1", "incorrect"],
+  ["-1, 0, sqrt(1)", "correct"],
+]
+
+[[group]]
+name = "near-miss irrational elements"
+type = "point"
+key = "(sqrt(2), pi)"
+cases = [
+  ["(sqrt(2) + 10^(-45), pi)", "incorrect"],
+  ["(2^(1/2), 4arctan(1))", "correct"],
+]
+
+[[group]]
+name = "near-miss endpoint"
+type = "interval"
+key = "(0, 1)"
+cases = [
+  ["(0, 1 + 10^(-45))", "incorrect"],
+  ["(10^(-60), 1)", "incorrect"],
+  ["(0, 2/2)", "correct"],
+]
+
+[[group]]
+name = "near-miss antiderivative"
+type = "antiderivative"
+key = "x^3/3 + C"
+cases = [
+  ["x^3/3 + 10^(-50)x", "incorrect"],
+  ["(1/3 + 10^(-45))x^3", "incorrect"],
+]
+
+[[group]]
+name = "near-miss tiny constant"
+type = "expression"
+key = "sin(x)"
+cases = [
+  ["sin(x) + 10^(-60)", "incorrect"],
+  ["sin(x) + 10^(-60)*x", "incorrect"],
+  ["sin(x) + 0*10^(-60)", "correct"],
+]

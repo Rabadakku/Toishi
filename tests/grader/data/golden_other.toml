@@ -1,0 +1,371 @@
+# Golden cases (MATH-11): choice, truefalse, text, quantity (1.1), self, and MathLive input.
+# MathLive cases use LaTeX exactly as `mf.getValue("latex-unstyled")` reports it
+# (see tests/grader/data/mathlive_fixtures.json for keystroke-generated samples).
+
+[[group]]
+name = "select all that apply"
+type = "choice"
+opts = { choices = [["the derivative is zero", true], ["the function is continuous", false], ["the derivative is undefined", true], ["the second derivative is positive", false]] }
+cases = [
+  ["a, c", "correct"],
+  ["c, a", "correct"],
+  ["1, 3", "correct"],
+  ["A, C", "correct"],
+  ["a", "incorrect"],
+  ["a, b, c", "incorrect"],
+  ["e", "invalid"],
+  ["", "invalid"],
+  ["a c", "correct"],
+  ["5", "invalid"],
+]
+
+[[group]]
+name = "single choice"
+type = "choice"
+opts = { choices = [["l'Hospital's rule", false], ["factor and cancel", true], ["squeeze theorem", false]] }
+cases = [
+  ["b", "correct"],
+  ["2", "correct"],
+  ["a", "incorrect"],
+  ["b, c", "incorrect"],
+  ["factor and cancel", "invalid"],
+]
+
+[[group]]
+name = "true"
+type = "truefalse"
+key = "true"
+cases = [
+  ["true", "correct"],
+  ["True", "correct"],
+  ["T", "correct"],
+  ["yes", "correct"],
+  ["false", "incorrect"],
+  ["F", "incorrect"],
+  ["maybe", "invalid"],
+  ["", "invalid"],
+]
+
+[[group]]
+name = "false"
+type = "truefalse"
+key = "false"
+cases = [
+  ["false", "correct"],
+  ["no", "correct"],
+  ["FALSE", "correct"],
+  ["true", "incorrect"],
+]
+
+[[group]]
+name = "text alternatives"
+type = "text"
+key = "concave up; concave upward"
+cases = [
+  ["concave up", "correct"],
+  ["Concave Up", "correct"],
+  ["  concave   up ", "correct"],
+  ["concave upward", "correct"],
+  ["concave up.", "correct"],
+  ["concave down", "incorrect"],
+  ["concaveup", "incorrect"],
+  ["CONCAVE UPWARD", "correct"],
+  ["up", "incorrect"],
+  ["", "invalid"],
+]
+
+[[group]]
+name = "text with a known wrong answer"
+type = "text"
+key = "local maximum"
+opts = { wrong = "local minimum => f'' < 0 means concave down @2" }
+cases = [
+  ["local maximum", "correct"],
+  ["Local Maximum", "correct"],
+  ["local minimum", "incorrect"],
+  ["maximum", "incorrect"],
+]
+
+[[group]]
+name = "quantity arrives in 1.1"
+type = "quantity"
+key = "9.8 m/s^2"
+cases = [
+  ["9.8 m/s^2", "unsupported"],
+  ["10", "unsupported"],
+]
+
+[[group]]
+name = "self-graded"
+type = "self"
+cases = [
+  ["anything", "unsupported"],
+]
+
+[[group]]
+name = "mathlive number"
+type = "number"
+key = "sqrt(2)/2"
+cases = [
+  ['\frac{\sqrt{2}}{2}', "correct", "mathlive"],
+  ['\frac{1}{\sqrt{2}}', "correct", "mathlive"],
+  ['\frac{\sqrt2}{2}', "correct", "mathlive"],
+  ['\sqrt2', "incorrect", "mathlive"],
+  ['\frac{\sqrt{2}}{\placeholder{}}', "invalid", "mathlive"],
+  ['0.7071', "correct", "mathlive"],
+  ['2^{-\frac{1}{2}}', "correct", "mathlive"],
+  ['\sin\left(\frac{\pi}{4}\right)', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive polynomial"
+type = "expression"
+key = "x^2 - 4"
+cases = [
+  ['x^2-4', "correct", "mathlive"],
+  ['\left(x-2\right)\left(x+2\right)', "correct", "mathlive"],
+  ['x^{2}+4', "incorrect", "mathlive"],
+  ['x^2-4=0', "invalid", "mathlive"],
+  ['x\cdot x-4', "correct", "mathlive"],
+  ['x\times x-4', "correct", "mathlive"],
+  ['xx-4', "invalid", "mathlive"],
+]
+
+[[group]]
+name = "mathlive sine"
+type = "expression"
+key = "sin(x)"
+cases = [
+  ['\sin x', "correct", "mathlive"],
+  ['\sin\left(x\right)', "correct", "mathlive"],
+  ['\cos\left(\frac{\pi}{2}-x\right)', "correct", "mathlive"],
+  ['\sin2x', "incorrect", "mathlive"],
+  ['\sin', "invalid", "mathlive"],
+  ['\sin(x)', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive double angle"
+type = "expression"
+key = "sin(2x)"
+cases = [
+  ['\sin2x', "correct", "mathlive"],
+  ['\sin 2x', "correct", "mathlive"],
+  ['2\sin x\cos x', "correct", "mathlive"],
+  ['2\sin\left(x\right)\cos\left(x\right)', "correct", "mathlive"],
+  ['\sin x\cos x', "incorrect", "mathlive"],
+]
+
+[[group]]
+name = "mathlive powers of trig"
+type = "expression"
+key = "sin(x)^2"
+cases = [
+  ['\sin^2x', "correct", "mathlive"],
+  ['\sin^{2}\left(x\right)', "correct", "mathlive"],
+  ['\sin\left(x\right)^2', "correct", "mathlive"],
+  ['\sin x^2', "incorrect", "mathlive"],
+  ['1-\cos^2x', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive inverse trig"
+type = "expression"
+key = "arcsin(x)"
+cases = [
+  ['\sin^{-1}\left(x\right)', "correct", "mathlive"],
+  ['\arcsin x', "correct", "mathlive"],
+  ['\arcsin\left(x\right)', "correct", "mathlive"],
+  ['\frac{1}{\sin x}', "incorrect", "mathlive"],
+  ['\ln^{-1}x', "invalid", "mathlive"],
+]
+
+[[group]]
+name = "mathlive exponentials"
+type = "expression"
+key = "e^(2x)"
+cases = [
+  ['e^{2x}', "correct", "mathlive"],
+  ['e^2x', "incorrect", "mathlive"],
+  ['\exponentialE^{2x}', "correct", "mathlive"],
+  ['\left(e^x\right)^2', "correct", "mathlive"],
+  ['\exp\left(2x\right)', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive logs"
+type = "expression"
+key = "ln(x^2)"
+cases = [
+  ['2\ln\left|x\right|', "correct", "mathlive"],
+  ['2\ln\left\vert x\right\vert', "correct", "mathlive"],
+  ['2\ln x', "incorrect", "mathlive"],
+  ['\ln x^2', "correct", "mathlive"],
+  ['\ln\left(x^2\right)', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive log base"
+type = "expression"
+key = "log_2(x)"
+cases = [
+  ['\log_2\left(x\right)', "correct", "mathlive"],
+  ['\log_{2}x', "correct", "mathlive"],
+  ['\frac{\ln x}{\ln 2}', "correct", "mathlive"],
+  ['\log_{\left(x\right)}', "invalid", "mathlive"],
+  ['\log_{\placeholder{}}\left(x\right)', "invalid", "mathlive"],
+  ['\log\left(x\right)', "incorrect", "mathlive"],
+]
+
+[[group]]
+name = "mathlive roots"
+type = "expression"
+key = "root(x, 3)"
+cases = [
+  ['\sqrt[3]{x}', "correct", "mathlive"],
+  ['x^{\frac{1}{3}}', "correct", "mathlive"],
+  ['\sqrt{x}', "incorrect", "mathlive"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "mathlive interval"
+type = "interval"
+key = "(-inf, 0) U (2, inf)"
+opts = { vars = ["x"] }
+cases = [
+  ['(-\infty,0)\cup(2,\infty)', "correct", "mathlive"],
+  ['\left(-\infty,0\right)\cup\left(2,\infty\right)', "correct", "mathlive"],
+  ['x<0\lor x>2', "correct", "mathlive"],
+  ['\left(-\infty,0\right\rbrack\cup\left(2,\infty\right)', "incorrect", "mathlive"],
+  ['x<0\text{ or }x>2', "correct", "mathlive"],
+]
+
+[[group]]
+# M7: inequality answers need the declared variable (ADR-0019 item 11, MATH-9)
+name = "mathlive closed interval"
+type = "interval"
+key = "[1, 2)"
+opts = { vars = ["x"] }
+cases = [
+  ['\left\lbrack1,2\right)', "correct", "mathlive"],
+  ['1\le x<2', "correct", "mathlive"],
+  ['\left\lbrack1,2\right\rbrack', "incorrect", "mathlive"],
+]
+
+[[group]]
+name = "mathlive set"
+type = "set"
+key = "-1, 0, 1"
+cases = [
+  ['-1,0,1', "correct", "mathlive"],
+  ['\left\lbrace -1,0,1\right\rbrace', "correct", "mathlive"],
+  ['\emptyset', "incorrect", "mathlive"],
+  ['\pm1,0', "invalid", "mathlive"],
+]
+
+[[group]]
+name = "mathlive matrix"
+type = "matrix"
+key = "[[1, 2], [3, 4]]"
+cases = [
+  ['\begin{bmatrix}1 & 2\\ 3 & 4\end{bmatrix}', "correct", "mathlive"],
+  ['\begin{pmatrix}1 & 2\\ 3 & 4\end{pmatrix}', "correct", "mathlive"],
+  ['\begin{bmatrix}1 & 3\\ 2 & 4\end{bmatrix}', "incorrect", "mathlive"],
+  ['\begin{vmatrix}1 & 2\\ 3 & 4\end{vmatrix}', "invalid", "mathlive"],
+]
+
+[[group]]
+name = "mathlive vector and point"
+type = "vector"
+key = "<1, -2, 3>"
+cases = [
+  ['\langle 1,-2,3\rangle', "correct", "mathlive"],
+  ['\left\langle 1,-2,3\right\rangle', "correct", "mathlive"],
+  ['\left(1,-2,3\right)', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive symbols multiply"
+type = "expression"
+key = "2*pi*x"
+cases = [
+  ['2\pi x', "correct", "mathlive"],
+  ['2x\pi', "correct", "mathlive"],
+  ['\pi x', "incorrect", "mathlive"],
+  ['2pix', "invalid", "mathlive"],
+]
+
+[[group]]
+name = "mathlive mixed number guard"
+type = "number"
+key = "7/2"
+cases = [
+  ['3\frac{1}{2}', "invalid", "mathlive"],
+  ['\frac{7}{2}', "correct", "mathlive"],
+  ['3+\frac{1}{2}', "correct", "mathlive"],
+  ['3.5', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive tokens"
+type = "number"
+key = "DNE"
+cases = [
+  ['DNE', "correct", "mathlive"],
+  ['\text{DNE}', "correct", "mathlive"],
+  ['\mathrm{DNE}', "correct", "mathlive"],
+  ['\infty', "incorrect", "mathlive"],
+  ['\unknowncommand', "invalid", "mathlive"],
+]
+
+[[group]]
+name = "mathlive degrees"
+type = "number"
+key = "30"
+opts = { angles = "degrees" }
+cases = [
+  ['30^{\circ}', "correct", "mathlive"],
+  ['30^\circ', "correct", "mathlive"],
+  ['\arcsin\left(\frac{1}{2}\right)', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive two variables"
+type = "expression"
+key = "x*y"
+cases = [
+  ['xy', "invalid", "mathlive"],
+  ['x\cdot y', "correct", "mathlive"],
+  ['y\cdot x', "correct", "mathlive"],
+]
+
+[[group]]
+name = "mathlive antiderivative"
+type = "antiderivative"
+key = "x^3/3 + C"
+cases = [
+  ['\frac{x^3}{3}+C', "correct", "mathlive"],
+  ['\frac{1}{3}x^3', "correct", "mathlive"],
+  ['x^3', "incorrect", "mathlive"],
+]
+
+[[group]]
+name = "mathlive equation"
+type = "equation"
+key = "y = 2x + 1"
+cases = [
+  ['y=2x+1', "correct", "mathlive"],
+  ['2x-y+1=0', "correct", "mathlive"],
+  ['y=2x-1', "incorrect", "mathlive"],
+]
+
+[[group]]
+name = "mathlive points"
+type = "point"
+key = "(0, 0), (2, -4)"
+cases = [
+  ['\left(0,0\right),\left(2,-4\right)', "correct", "mathlive"],
+  ['\left(2,-4\right),\left(0,0\right)', "correct", "mathlive"],
+  ['\left(0,0\right)', "incorrect", "mathlive"],
+]

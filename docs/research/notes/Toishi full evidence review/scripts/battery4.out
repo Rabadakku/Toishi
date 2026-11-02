@@ -1,0 +1,13 @@
+T1 simplified key sqrt(2) | 2/sqrt(2)           -> incorrect     476 ms  Right value, but the card asks for simplified form.
+T2 simplified key 2*sqrt(3) | sqrt(12)          -> correct         6 ms  
+T3 simplified key 2*sqrt(3) | 6/sqrt(3)         -> correct         5 ms  
+T4 simplified key 3*sqrt(5) | sqrt(45)          -> correct         5 ms  
+T5 simplified key 5*sqrt(2)/2 | 5/sqrt(2)       -> correct         6 ms  
+T6 simplified key 5*sqrt(2)/2 | sqrt(50)/2      -> correct         8 ms  
+T7 simplified key (x+1)/(x-1) | (x^2+x)/(x^2-x) -> incorrect      22 ms  Your answer is undefined at x = 0.0, where the correct answer is defin
+T8 simplified key x^2 | x*x                     -> correct         4 ms  
+T9 simplified key 2*x | x+x                     -> incorrect       1 ms  Right value, but the card asks for simplified form.
+T10 simplified key 1/2 | 3/6                    -> incorrect       1 ms  Right value, but the card asks for simplified form.
+T11 simplified key 7/3 | 2+1/3                  -> incorrect       1 ms  Right value, but the card asks for simplified form.
+T12 simplified key sqrt(3)/3 | 1/sqrt(3)        -> correct         7 ms  
+T13 default key 2*sqrt(2) | sqrt(8) (no form)   -> correct         2 ms  

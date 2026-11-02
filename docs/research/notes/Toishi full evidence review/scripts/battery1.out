@@ -1,0 +1,198 @@
+STACK#1061 inequality var rename: key (1,inf), student 't > 1'    -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+  same, student 'x > 1'                                           -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+STACK#107 sigfig floor: 0.1667 m, 4 s.f., student 0.1667 m        -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 0.1666 m                                                -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 0.167 m (3 s.f.)                                        -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 1.667e-1 m                                              -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 0.16670 m (5 s.f.)                                      -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+large: key 10^100, student 10^100+1                               -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+large: key 10^100, student 1e100                                  -> invalid          0 ms  A number can't follow 'e' without an operator.
+large: key 10^100, student 10^100+10^50                           -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+tiny: key 0, student 10^(-30)                                     -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+tiny: key 0, student 0.0000001                                    -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+pi: student 355/113                                               -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+pi: student 3.14159265                                            -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+pi: student 3.14 (0.05% off)                                      -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+pi: student 3.1                                                   -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+hole: key x+1, student (x^2-1)/(x-1)                              -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+hole: key (x^2-1)/(x-1), student x+1                              -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+hole: key (x^2-1)/(x-1), student (x+1)(x-1)/(x-1)                 -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+ln|x|: key 2*ln(abs(x)), student ln(x^2)                          -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+ln: key 2*ln(x) (no domain), student ln(x^2)                      -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+ln: key 2*ln(x) domain x>0, student ln(x^2)                       -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+sqrt(x^2): key abs(x), student sqrt(x^2)                          -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+sqrt(x^2): key x, student sqrt(x^2)                               -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+cuberoot: key root(x,3), student x^(1/3)                          -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+cuberoot: key x^(1/3) domain x>0, student root(x,3)               -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+9^9^9 as number                                                   -> invalid          0 ms  Exponents are limited to 1000.
+equation: key x=4, student sqrt(x)=2                              -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+equation: key y=2x+1, student 2x-y+1=0                            -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+atan sum: key pi/2 domain x>0, student atan(x)+atan(1/x)          -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+atan sum: key pi/2 no domain, student atan(x)+atan(1/x)           -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+trig: key 1, student sin(x)^2+cos(x)^2                            -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+trig: key 1, student sec(x)^2-tan(x)^2                            -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+antideriv: key ln(abs(x))+C (of 1/x), student ln(x)               -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+antideriv: key ln(abs(x))+C, student ln(abs(x))                   -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+antideriv: key ln(abs(x))+C, student ln(x^2)/2 + 7                -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+antideriv: key ln(x)+C domain x>0, student ln(x)                  -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+units: key 9.8 m/s^2 sf2, student 980 cm/s^2                      -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.8 m/s                                            -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.8 (no unit)                                      -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.80 m/s^2 (3 sf)                                  -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.81 m/s^2                                         -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units temp: key 20 degC                                           -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units case: key 5 mS vs ms                                        -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+interval: [0,2] vs 0<=x<=2                                        -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+interval: [0,2] vs (0,2)                                          -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+interval: (-inf,0)U(0,inf) vs x<0 or x>0                          -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+interval: (-inf,0)U(0,inf) vs (-inf, inf)                         -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+set order: -1,0,1 vs 1,0,-1                                       -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+set dup: -1,0,1 vs -1,0,1,1                                       -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+lowest-terms: 1/3 form lowest-terms, student 2/6                  -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+lowest-terms: student 0.3333                                      -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+exact: sqrt(2)/2 exact, student 0.7071                            -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+cardano: key 2, student (sqrt(108)+10)^(1/3)-(sqrt(108)-10)^(1/3) -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+junk: DROP TABLE                                                  -> invalid          0 ms  Can't read 'import': two letters never multiply.
+junk: dunder                                                      -> invalid          0 ms  Unexpected '.' at position 2.
+junk: sinx                                                        -> invalid          0 ms  Can't read 'sinx'.
+junk: e^2x                                                        -> EXC RuntimeError: 
+        An attempt has been made to start a new process before the
+        curr
+STACK#1061 inequality var rename: key (1,inf), student 't > 1'    -> correct        520 ms  
+  same, student 'x > 1'                                           -> correct          1 ms  
+STACK#107 sigfig floor: 0.1667 m, 4 s.f., student 0.1667 m        -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 0.1666 m                                                -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 0.167 m (3 s.f.)                                        -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 1.667e-1 m                                              -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+  student 0.16670 m (5 s.f.)                                      -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+large: key 10^100, student 10^100+1                               -> incorrect       32 ms  
+large: key 10^100, student 1e100                                  -> invalid          0 ms  A number can't follow 'e' without an operator.
+large: key 10^100, student 10^100+10^50                           -> incorrect        2 ms  
+tiny: key 0, student 10^(-30)                                     -> incorrect        2 ms  
+tiny: key 0, student 0.0000001                                    -> incorrect        1 ms  
+pi: student 355/113                                               -> incorrect        1 ms  
+pi: student 3.14159265                                            -> correct          1 ms  
+pi: student 3.14 (0.05% off)                                      -> correct          1 ms  
+pi: student 3.1                                                   -> incorrect        1 ms  
+hole: key x+1, student (x^2-1)/(x-1)                              -> incorrect        9 ms  Your answer is undefined at x = 1.0, where the correct answer is defin
+hole: key (x^2-1)/(x-1), student x+1                              -> correct         16 ms  
+hole: key (x^2-1)/(x-1), student (x+1)(x-1)/(x-1)                 -> correct         14 ms  
+ln|x|: key 2*ln(abs(x)), student ln(x^2)                          -> correct        108 ms  
+ln: key 2*ln(x) (no domain), student ln(x^2)                      -> correct         21 ms  
+ln: key 2*ln(x) domain x>0, student ln(x^2)                       -> correct         18 ms  
+sqrt(x^2): key abs(x), student sqrt(x^2)                          -> correct          7 ms  
+sqrt(x^2): key x, student sqrt(x^2)                               -> incorrect        3 ms  
+cuberoot: key root(x,3), student x^(1/3)                          -> correct          8 ms  
+cuberoot: key x^(1/3) domain x>0, student root(x,3)               -> correct          8 ms  
+9^9^9 as number                                                   -> invalid          0 ms  Exponents are limited to 1000.
+equation: key x=4, student sqrt(x)=2                              -> incorrect        4 ms  Your equation is undefined where the correct one is defined.
+equation: key y=2x+1, student 2x-y+1=0                            -> correct         42 ms  
+atan sum: key pi/2 domain x>0, student atan(x)+atan(1/x)          -> correct         25 ms  
+atan sum: key pi/2 no domain, student atan(x)+atan(1/x)           -> incorrect        5 ms  
+trig: key 1, student sin(x)^2+cos(x)^2                            -> correct         29 ms  
+trig: key 1, student sec(x)^2-tan(x)^2                            -> incorrect       33 ms  Your answer is undefined at x = -11*pi/2, where the correct answer is 
+antideriv: key ln(abs(x))+C (of 1/x), student ln(x)               -> incorrect        5 ms  Your answer is undefined where the correct answer is defined.
+antideriv: key ln(abs(x))+C, student ln(abs(x))                   -> correct         29 ms  
+antideriv: key ln(abs(x))+C, student ln(x^2)/2 + 7                -> correct         84 ms  
+antideriv: key ln(x)+C domain x>0, student ln(x)                  -> correct         21 ms  
+units: key 9.8 m/s^2 sf2, student 980 cm/s^2                      -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.8 m/s                                            -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.8 (no unit)                                      -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.80 m/s^2 (3 sf)                                  -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units: student 9.81 m/s^2                                         -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units temp: key 20 degC                                           -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+units case: key 5 mS vs ms                                        -> unsupported      0 ms  quantity answers (numbers with units) arrive in version 1.1.
+interval: [0,2] vs 0<=x<=2                                        -> correct          1 ms  
+interval: [0,2] vs (0,2)                                          -> incorrect        1 ms  
+interval: (-inf,0)U(0,inf) vs x<0 or x>0                          -> correct          2 ms  
+interval: (-inf,0)U(0,inf) vs (-inf, inf)                         -> incorrect        1 ms  
+set order: -1,0,1 vs 1,0,-1                                       -> correct          2 ms  
+set dup: -1,0,1 vs -1,0,1,1                                       -> correct          2 ms  
+lowest-terms: 1/3 form lowest-terms, student 2/6                  -> incorrect        1 ms  Right value, but the card asks for lowest terms.
+lowest-terms: student 0.3333                                      -> incorrect        1 ms  Right value, but the card asks for lowest terms (no decimals).
+exact: sqrt(2)/2 exact, student 0.7071                            -> incorrect        1 ms  Right value, but give an exact answer (no decimals).
+cardano: key 2, student (sqrt(108)+10)^(1/3)-(sqrt(108)-10)^(1/3) -> correct         80 ms  
+junk: DROP TABLE                                                  -> invalid          0 ms  Can't read 'import': two letters never multiply.
+junk: dunder                                                      -> invalid          0 ms  Unexpected '.' at position 2.
+junk: sinx                                                        -> invalid          1 ms  Can't read 'sinx'.
+junk: e^2x                                                        -> incorrect        5 ms  

@@ -1,0 +1,87 @@
+"""Student model (docs/design/student-model.md v1.1, section 3).
+
+`StudentModel` (model.py) predicts and updates; `refit` (refit.py) refits the shared
+parameters; simulate.py samples synthetic students from the model for recovery tests.
+"""
+
+from core.learner.model import (
+    MATCH_HORIZON_DAYS,
+    SPEED_SHRINKAGE,
+    StudentModel,
+    TimedAttempt,
+    failure_step,
+    is_success,
+    is_timed,
+    memory_share,
+    mix_memory,
+    order_key,
+    success_step,
+)
+from core.learner.refit import (
+    ADOPT_MARGIN,
+    ADOPT_P,
+    HELD_OUT_SHARE,
+    REFIT_FIRST_ATTEMPTS,
+    REFIT_GROWTH,
+    REFIT_MAX_NEW,
+    BlockDecision,
+    RefitDecision,
+    calibration_drift,
+    refit,
+    refit_due,
+)
+from core.learner.simulate import Schedule, Simulation, SyntheticCourse, simulate, synthetic_course
+from core.learner.types import (
+    ROLES,
+    ComponentId,
+    ComponentInfo,
+    ComponentState,
+    MemoryState,
+    Observation,
+    Prediction,
+    ProblemSpec,
+    SharedParams,
+    StudentState,
+    UpdateRecord,
+)
+
+__all__ = [
+    "ADOPT_MARGIN",
+    "ADOPT_P",
+    "HELD_OUT_SHARE",
+    "MATCH_HORIZON_DAYS",
+    "REFIT_FIRST_ATTEMPTS",
+    "REFIT_GROWTH",
+    "REFIT_MAX_NEW",
+    "ROLES",
+    "SPEED_SHRINKAGE",
+    "BlockDecision",
+    "ComponentId",
+    "ComponentInfo",
+    "ComponentState",
+    "MemoryState",
+    "Observation",
+    "Prediction",
+    "ProblemSpec",
+    "RefitDecision",
+    "Schedule",
+    "SharedParams",
+    "Simulation",
+    "StudentModel",
+    "StudentState",
+    "SyntheticCourse",
+    "TimedAttempt",
+    "UpdateRecord",
+    "calibration_drift",
+    "failure_step",
+    "is_success",
+    "is_timed",
+    "memory_share",
+    "mix_memory",
+    "order_key",
+    "refit",
+    "refit_due",
+    "simulate",
+    "success_step",
+    "synthetic_course",
+]

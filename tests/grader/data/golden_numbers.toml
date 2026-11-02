@@ -1,0 +1,499 @@
+# Golden cases (MATH-11): numbers. Each group is one card; each case is
+# [answer, expected] or [answer, expected, "mathlive"].
+# expected: correct | incorrect | invalid (no attempt) | undecidable | unsupported
+
+[[group]]
+name = "fraction"
+type = "number"
+key = "-2/3"
+cases = [
+  ["-2/3", "correct"],
+  ["-4/6", "correct"],
+  ["-0.6667", "correct"],
+  ["-0.667", "correct"],
+  ["-0.6666", "correct"],
+  ["-0.67", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["-0.66", "correct"],  # M7: exactly 1% off; the 1% default is inclusive (ADR-0019 item 11)
+  ["2/3", "incorrect"],
+  ["-3/2", "incorrect"],
+  ["-(2/3)", "correct"],
+  ["(-2)/3", "correct"],
+  ["2/-3", "correct"],
+  ["-2÷3", "correct"],
+  ["−2/3", "correct"],
+  ["-1 + 1/3", "correct"],
+  ["-2/3 + 0", "correct"],
+  ["DNE", "incorrect"],
+  ["inf", "incorrect"],
+  ["x", "invalid"],
+  ["-2/3, 1", "invalid"],
+  ["x = -2/3", "invalid"],
+  ["", "invalid"],
+  ["-2//3", "invalid"],
+  ["- 2 / 3", "correct"],
+]
+
+[[group]]
+name = "root two over two"
+type = "number"
+key = "sqrt(2)/2"
+cases = [
+  ["1/sqrt(2)", "correct"],
+  ["sqrt(2)/2", "correct"],
+  ["2^(-1/2)", "correct"],
+  ["sqrt(1/2)", "correct"],
+  ["0.7071", "correct"],
+  ["0.707", "correct"],
+  ["0.71", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["0.7", "incorrect"],
+  ["sqrt(2)", "incorrect"],
+  ["2/sqrt(2)", "incorrect"],
+  ["sin(pi/4)", "correct"],
+  ["cos(pi/4)", "correct"],
+  ["root(2, 2)/2", "correct"],
+  ["sqrt2/2", "invalid"],
+  ["√(2)/2", "correct"],
+  ["(1/2)^(1/2)", "correct"],
+  ["2^(1/2)/2", "correct"],
+  ["sqrt(2)/2 + 10^(-30)", "incorrect"],
+]
+
+[[group]]
+name = "pi over four"
+type = "number"
+key = "pi/4"
+cases = [
+  ["pi/4", "correct"],
+  ["0.7854", "correct"],
+  ["0.785", "correct"],
+  ["0.78", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["45", "incorrect"],
+  ["arctan(1)", "correct"],
+  ["atan(1)", "correct"],
+  ["π/4", "correct"],
+  ["1/4pi", "correct"],
+  ["22/28", "incorrect"],
+  ["355/452", "incorrect"],
+  ["pi / 4", "correct"],
+  ["2pi/8", "correct"],
+  ["arcsin(sqrt(2)/2)", "correct"],
+]
+
+[[group]]
+name = "pi exactly"
+type = "number"
+key = "pi"
+cases = [
+  ["22/7", "incorrect"],
+  ["355/113", "incorrect"],
+  ["3.1416", "correct"],
+  ["3.14", "correct"],
+  ["3.1", "incorrect"],
+  ["4arctan(1)", "correct"],
+  ["arccos(-1)", "correct"],
+  ["pi", "correct"],
+]
+
+[[group]]
+name = "infinity"
+type = "number"
+key = "inf"
+cases = [
+  ["inf", "correct"],
+  ["infinity", "correct"],
+  ["oo", "correct"],
+  ["∞", "correct"],
+  ["+inf", "correct"],
+  ["-inf", "incorrect"],
+  ["DNE", "incorrect"],
+  ["1000000", "incorrect"],
+  ["inf + 1", "invalid"],
+  ["2inf", "invalid"],
+]
+
+[[group]]
+name = "minus infinity"
+type = "number"
+key = "-inf"
+cases = [
+  ["-inf", "correct"],
+  ["-oo", "correct"],
+  ["- inf", "correct"],
+  ["-(inf)", "correct"],
+  ["inf", "incorrect"],
+  ["DNE", "incorrect"],
+]
+
+[[group]]
+name = "does not exist"
+type = "number"
+key = "DNE"
+cases = [
+  ["DNE", "correct"],
+  ["dne", "correct"],
+  ["Dne", "correct"],
+  ["inf", "incorrect"],
+  ["-inf", "incorrect"],
+  ["0", "incorrect"],
+  ["none", "invalid"],
+  ["does not exist", "invalid"],
+]
+
+[[group]]
+name = "zero"
+type = "number"
+key = "0"
+cases = [
+  ["0", "correct"],
+  ["0.0", "correct"],
+  ["-0", "correct"],
+  ["0.0001", "incorrect"],
+  ["sin(pi)", "correct"],
+  ["ln(1)", "correct"],
+  ["1 - 1", "correct"],
+  ["e^0 - 1", "correct"],
+  ["10^(-40)", "incorrect"],
+]
+
+[[group]]
+name = "e squared"
+type = "number"
+key = "e^2"
+cases = [
+  ["e^2", "correct"],
+  ["7.389", "correct"],
+  ["7.39", "correct"],
+  ["7.4", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["exp(2)", "correct"],
+  ["e*e", "correct"],
+  ["2e", "incorrect"],
+  ["e^(2)", "correct"],
+  ["(e)^2", "correct"],
+  ["e²", "correct"],
+  ["e^2.0", "correct"],
+]
+
+[[group]]
+name = "natural log of two"
+type = "number"
+key = "ln(2)"
+cases = [
+  ["ln(2)", "correct"],
+  ["0.6931", "correct"],
+  ["log(2)", "incorrect"],
+  ["log_e(2)", "correct"],
+  ["-ln(1/2)", "correct"],
+  ["ln(4)/2", "correct"],
+  ["ln(4) - ln(2)", "correct"],
+  ["0.69", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["log_2(e)", "incorrect"],
+  ["1/log_2(e)", "correct"],
+]
+
+[[group]]
+name = "absolute tolerance"
+type = "number"
+key = "3"
+opts = { tolerance = "0.01" }
+cases = [
+  ["3.005", "correct"],
+  ["2.995", "correct"],
+  ["3.02", "incorrect"],
+  ["3", "correct"],
+  ["6/2", "correct"],
+  ["3.0", "correct"],
+  ["2.98", "incorrect"],
+]
+
+[[group]]
+name = "percent tolerance"
+type = "number"
+key = "100"
+opts = { tolerance = "1%" }
+cases = [
+  ["101", "incorrect"],
+  ["100.9", "correct"],
+  ["99.5", "correct"],
+  ["102.0", "incorrect"],
+  ["98.0", "incorrect"],
+  ["100", "correct"],
+]
+
+[[group]]
+name = "exact required"
+type = "number"
+key = "1/3"
+opts = { exact = true }
+cases = [
+  ["1/3", "correct"],
+  ["2/6", "correct"],
+  ["0.3333", "incorrect"],
+  ["0.333", "incorrect"],
+  ["1/4", "incorrect"],
+]
+
+[[group]]
+name = "decimal key"
+type = "number"
+key = "2.5"
+cases = [
+  ["5/2", "correct"],
+  ["2.5", "correct"],
+  ["2.50", "correct"],
+  ["2.4", "incorrect"],
+  ["2.502", "correct"],
+  ["10/4", "correct"],
+  ["2.51", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+]
+
+[[group]]
+name = "rounded key"
+type = "number"
+key = "1.4142"
+cases = [
+  ["sqrt(2)", "correct"],
+  ["1.414", "correct"],
+  ["1.41", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["1.42", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+]
+
+[[group]]
+name = "two decimal places"
+type = "number"
+key = "2/3"
+opts = { form = "decimal(2)" }
+cases = [
+  ["0.67", "correct"],
+  ["0.66", "incorrect"],
+  ["0.667", "incorrect"],
+  ["2/3", "incorrect"],
+  ["0.670", "incorrect"],
+  ["0.7", "incorrect"],
+]
+
+[[group]]
+name = "one decimal place"
+type = "number"
+key = "pi"
+opts = { form = "decimal(1)" }
+cases = [
+  ["3.1", "correct"],
+  ["3.14", "incorrect"],
+  ["3.2", "incorrect"],
+  ["3", "incorrect"],
+]
+
+[[group]]
+name = "small decimal places"
+type = "number"
+key = "0.01234"
+opts = { form = "decimal(2)" }
+cases = [
+  ["0.01", "correct"],
+  ["0.02", "incorrect"],
+  ["0.012", "incorrect"],
+]
+
+[[group]]
+name = "root eight"
+type = "number"
+key = "sqrt(8)"
+cases = [
+  ["2sqrt(2)", "correct"],
+  ["2*sqrt(2)", "correct"],
+  ["sqrt(2)*2", "correct"],
+  ["2.828", "correct"],
+  ["2.83", "correct"],
+  ["8^(1/2)", "correct"],
+  ["4^(3/4)", "correct"],
+  ["sqrt(4)*sqrt(2)", "correct"],
+  ["2sqrt2", "invalid"],
+  ["3sqrt(2)", "incorrect"],
+  ["sqrt(2)^3", "correct"],
+]
+
+[[group]]
+name = "cube root of a negative"
+type = "number"
+key = "root(-8, 3)"
+cases = [
+  ["-2", "correct"],
+  ["(-8)^(1/3)", "correct"],
+  ["root(-8, 3)", "correct"],
+  ["2", "incorrect"],
+  ["-root(8, 3)", "correct"],
+  ["-8^(1/3)", "correct"],
+  ["(-27)^(1/3)", "incorrect"],
+  ["(-8)^(2/6)", "correct"],
+  ["sqrt(-4)", "incorrect"],
+]
+
+[[group]]
+name = "even power of a negative cube root"
+type = "number"
+key = "4"
+cases = [
+  ["(-8)^(2/3)", "correct"],
+  ["root(-8, 3)^2", "correct"],
+  ["(-8)^(1/3)^2", "incorrect"],
+]
+
+[[group]]
+name = "huge"
+type = "number"
+key = "10^20"
+cases = [
+  ["10^20", "correct"],
+  ["100000000000000000000", "correct"],
+  ["1*10^20", "correct"],
+  ["10^20 + 1", "incorrect"],
+  ["10^19", "incorrect"],
+  ["1.0*10^20", "correct"],
+  ["1.002*10^20", "correct"],  # M7: within the 1% default (ADR-0019 item 11); was incorrect at 0.1%
+  ["(10^10)^2", "correct"],
+]
+
+[[group]]
+name = "tiny"
+type = "number"
+key = "10^(-20)"
+cases = [
+  ["10^(-20)", "correct"],
+  ["10^-20", "correct"],
+  ["1/10^20", "correct"],
+  ["0", "incorrect"],
+  ["10^-21", "incorrect"],
+  ["0.00000000000000000001", "correct"],
+  ["2*10^(-20)", "incorrect"],
+]
+
+[[group]]
+name = "two to the hundred"
+type = "number"
+key = "2^100"
+cases = [
+  ["2^100", "correct"],
+  ["1267650600228229401496703205376", "correct"],
+  ["2^100 + 1", "incorrect"],
+  ["4^50", "correct"],
+  ["2^99", "incorrect"],
+  ["2^(10^10)", "invalid"],
+  ["2^2^2^2^2", "invalid"],
+]
+
+[[group]]
+name = "near misses"
+type = "number"
+key = "1/7"
+cases = [
+  ["0.142857", "correct"],
+  ["2/14", "correct"],
+  ["1/7 + 10^(-15)", "incorrect"],
+  ["1/7 + 10^(-30)", "incorrect"],
+  ["1/8", "incorrect"],
+  ["142857/999999", "correct"],
+  ["142857/1000000", "incorrect"],
+]
+
+[[group]]
+name = "complex numbers"
+type = "number"
+key = "3 + 4i"
+opts = { vars = ["i imaginary"] }
+cases = [
+  ["3 + 4i", "correct"],
+  ["4i + 3", "correct"],
+  ["3 + 4*i", "correct"],
+  ["3 - 4i", "incorrect"],
+  ["(1 + 2i)^2 + 6", "correct"],
+  ["5", "incorrect"],
+  ["sqrt(-16) + 3", "correct"],
+  ["3 + 4j", "invalid"],
+]
+
+[[group]]
+name = "imaginary unit"
+type = "number"
+key = "i"
+opts = { vars = ["i imaginary"] }
+cases = [
+  ["sqrt(-1)", "correct"],
+  ["-i", "incorrect"],
+  ["i^5", "correct"],
+  ["i^2", "incorrect"],
+  ["1/i", "incorrect"],
+  ["-1/i", "correct"],
+]
+
+[[group]]
+name = "i is not imaginary by default"
+type = "number"
+key = "-1"
+cases = [
+  ["i^2", "invalid"],
+  ["-1", "correct"],
+]
+
+[[group]]
+name = "degrees"
+type = "number"
+key = "30"
+opts = { angles = "degrees" }
+cases = [
+  ["30", "correct"],
+  ["30°", "correct"],
+  ["pi/6", "incorrect"],
+  ["arcsin(1/2)", "correct"],
+  ["arcsin(0.5)", "correct"],
+  ["asin(1/2)", "correct"],
+  ["60/2", "correct"],
+  ["arctan(1/sqrt(3))", "correct"],
+  ["arccos(1/2)", "incorrect"],
+]
+
+[[group]]
+name = "sine in degrees"
+type = "number"
+key = "sin(30)"
+opts = { angles = "degrees" }
+cases = [
+  ["1/2", "correct"],
+  ["0.5", "correct"],
+  ["sin(30°)", "correct"],
+  ["cos(60)", "correct"],
+  ["sin(pi/6)", "incorrect"],
+]
+
+[[group]]
+name = "radians with a degree mark"
+type = "number"
+key = "pi/6"
+cases = [
+  ["30°", "correct"],
+  ["30", "incorrect"],
+  ["(30)°", "correct"],
+]
+
+[[group]]
+name = "a key with no value"
+type = "number"
+key = "ln(-1)"
+cases = [
+  ["0", "undecidable"],
+]
+
+[[group]]
+name = "unicode and spacing"
+type = "number"
+key = "1/2"
+cases = [
+  ["  1 / 2  ", "correct"],
+  ["１/２", "correct"],
+  ["1⁄2", "invalid"],
+  ["½", "invalid"],
+  ["0.5", "correct"],
+  [".5", "correct"],
+  ["05", "invalid"],
+  ["0.50", "correct"],
+  ["1.", "invalid"],
+]

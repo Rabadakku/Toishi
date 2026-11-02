@@ -1,0 +1,512 @@
+{
+ "mathlive": "0.111.4",
+ "cases": [
+  {
+   "id": "fraction",
+   "keys": [
+    "1/2"
+   ],
+   "set": null,
+   "latex": "\\frac12",
+   "ascii": "(1)/(2)"
+  },
+  {
+   "id": "fraction-then-x",
+   "keys": [
+    "1/2",
+    "{ArrowRight}",
+    "x"
+   ],
+   "set": null,
+   "latex": "\\frac12x",
+   "ascii": "(1)/(2)x"
+  },
+  {
+   "id": "fraction-of-sum",
+   "keys": [
+    "(x+1)/2"
+   ],
+   "set": null,
+   "latex": "\\frac{\\left(x+1\\right)}{2}",
+   "ascii": "((x+1))/(2)"
+  },
+  {
+   "id": "polynomial",
+   "keys": [
+    "x^2",
+    "{ArrowRight}",
+    "-4"
+   ],
+   "set": null,
+   "latex": "x^2-4",
+   "ascii": "x^2-4"
+  },
+  {
+   "id": "factored",
+   "keys": [
+    "(x-2)(x+2)"
+   ],
+   "set": null,
+   "latex": "\\left(x-2\\right)\\left(x+2\\right)",
+   "ascii": "(x-2)(x+2)"
+  },
+  {
+   "id": "sqrt",
+   "keys": [
+    "sqrt",
+    "x"
+   ],
+   "set": null,
+   "latex": "\\sqrt{x}",
+   "ascii": "sqrt(x)"
+  },
+  {
+   "id": "sqrt2-over-2",
+   "keys": [
+    "sqrt",
+    "2",
+    "{ArrowRight}",
+    "/2"
+   ],
+   "set": null,
+   "latex": "\\frac{\\sqrt2}{2}",
+   "ascii": "(sqrt(2))/(2)"
+  },
+  {
+   "id": "cube-root",
+   "keys": null,
+   "set": "\\sqrt[3]{x}",
+   "latex": "\\sqrt[3]{x}",
+   "ascii": "root(3)(x)"
+  },
+  {
+   "id": "sinx",
+   "keys": [
+    "sinx"
+   ],
+   "set": null,
+   "latex": "\\sin x",
+   "ascii": "sin x"
+  },
+  {
+   "id": "sin-paren",
+   "keys": [
+    "sin(x)"
+   ],
+   "set": null,
+   "latex": "\\sin\\left(x\\right)",
+   "ascii": "sin (x)"
+  },
+  {
+   "id": "sin2x",
+   "keys": [
+    "sin2x"
+   ],
+   "set": null,
+   "latex": "\\sin2x",
+   "ascii": "sin 2x"
+  },
+  {
+   "id": "sin-squared",
+   "keys": [
+    "sin",
+    "^2",
+    "{ArrowRight}",
+    "x"
+   ],
+   "set": null,
+   "latex": "\\sin^2x",
+   "ascii": "sin ^2x"
+  },
+  {
+   "id": "sin-paren-squared",
+   "keys": [
+    "sin(x)",
+    "{ArrowRight}",
+    "^2"
+   ],
+   "set": null,
+   "latex": "\\sin\\left(x\\right)^2",
+   "ascii": "sin (x)^2"
+  },
+  {
+   "id": "arcsin",
+   "keys": [
+    "arcsin(x)"
+   ],
+   "set": null,
+   "latex": "\\arcsin\\left(x\\right)",
+   "ascii": "arcsin (x)"
+  },
+  {
+   "id": "sin-inverse",
+   "keys": [
+    "sin",
+    "^-1",
+    "{ArrowRight}",
+    "(x)"
+   ],
+   "set": null,
+   "latex": "\\sin^{-1}\\left(x\\right)",
+   "ascii": "sin ^(-1)(x)"
+  },
+  {
+   "id": "e-squared-x",
+   "keys": [
+    "e^2",
+    "{ArrowRight}",
+    "x"
+   ],
+   "set": null,
+   "latex": "e^2x",
+   "ascii": "e^2x"
+  },
+  {
+   "id": "e-power-2x",
+   "keys": [
+    "e^2x"
+   ],
+   "set": null,
+   "latex": "e^2x",
+   "ascii": "e^2x"
+  },
+  {
+   "id": "ln",
+   "keys": [
+    "ln(x)"
+   ],
+   "set": null,
+   "latex": "\\ln\\left(x\\right)",
+   "ascii": "ln (x)"
+  },
+  {
+   "id": "two-ln-abs",
+   "keys": null,
+   "set": "2\\ln\\left|x\\right|",
+   "latex": "2\\ln\\left|x\\right|",
+   "ascii": "2ln |x|"
+  },
+  {
+   "id": "two-ln-abs-vert",
+   "keys": null,
+   "set": "2\\ln\\left\\vert x\\right\\vert",
+   "latex": "2\\ln\\left\\vert x\\right\\vert",
+   "ascii": "2ln |x|"
+  },
+  {
+   "id": "log-typed",
+   "keys": [
+    "log(x)"
+   ],
+   "set": null,
+   "latex": "\\log_{\\left(x\\right)}",
+   "ascii": "log _((x))"
+  },
+  {
+   "id": "log-arrow",
+   "keys": [
+    "log",
+    "{ArrowRight}",
+    "(x)"
+   ],
+   "set": null,
+   "latex": "\\log_{\\placeholder{}}\\left(x\\right)",
+   "ascii": "log _(())(x)"
+  },
+  {
+   "id": "log2-typed",
+   "keys": [
+    "log",
+    "2",
+    "{ArrowRight}",
+    "(x)"
+   ],
+   "set": null,
+   "latex": "\\log_2\\left(x\\right)",
+   "ascii": "log _2(x)"
+  },
+  {
+   "id": "log2",
+   "keys": null,
+   "set": "\\log_2\\left(x\\right)",
+   "latex": "\\log_2\\left(x\\right)",
+   "ascii": "log _2(x)"
+  },
+  {
+   "id": "abs",
+   "keys": null,
+   "set": "\\left|x-1\\right|",
+   "latex": "\\left|x-1\\right|",
+   "ascii": "|x-1|"
+  },
+  {
+   "id": "abs-bars",
+   "keys": null,
+   "set": "|x-1|",
+   "latex": "|x-1|",
+   "ascii": "|x-1|"
+  },
+  {
+   "id": "pi-over-4",
+   "keys": [
+    "pi/4"
+   ],
+   "set": null,
+   "latex": "\\frac{\\pi}{4}",
+   "ascii": "(pi)/(4)"
+  },
+  {
+   "id": "infinity",
+   "keys": [
+    "oo"
+   ],
+   "set": null,
+   "latex": "\\infty",
+   "ascii": "oo"
+  },
+  {
+   "id": "minus-infinity",
+   "keys": [
+    "-oo"
+   ],
+   "set": null,
+   "latex": "-\\infty",
+   "ascii": "-oo"
+  },
+  {
+   "id": "open-interval",
+   "keys": [
+    "(-oo,0)"
+   ],
+   "set": null,
+   "latex": "\\left(-\\infty,0\\right)",
+   "ascii": "(-oo,0)"
+  },
+  {
+   "id": "union",
+   "keys": null,
+   "set": "(-\\infty,0)\\cup(2,\\infty)",
+   "latex": "(-\\infty,0)\\cup(2,\\infty)",
+   "ascii": "(-oo,0)\u222a(2,oo)"
+  },
+  {
+   "id": "half-open",
+   "keys": [
+    "[1,2)"
+   ],
+   "set": null,
+   "latex": "\\left\\lbrack1,2\\right)",
+   "ascii": "[1,2)"
+  },
+  {
+   "id": "le",
+   "keys": [
+    "x<=2"
+   ],
+   "set": null,
+   "latex": "x\\le2",
+   "ascii": "x<=2"
+  },
+  {
+   "id": "or",
+   "keys": [
+    "x<0 or x>2"
+   ],
+   "set": null,
+   "latex": "x<0\\lor x>2",
+   "ascii": "x<0 or x>2"
+  },
+  {
+   "id": "equation",
+   "keys": [
+    "y=2x+1"
+   ],
+   "set": null,
+   "latex": "y=2x+1",
+   "ascii": "y=2x+1"
+  },
+  {
+   "id": "point",
+   "keys": [
+    "(2,-4)"
+   ],
+   "set": null,
+   "latex": "\\left(2,-4\\right)",
+   "ascii": "(2,-4)"
+  },
+  {
+   "id": "points",
+   "keys": [
+    "(0,0),(2,-4)"
+   ],
+   "set": null,
+   "latex": "\\left(0,0\\right),\\left(2,-4\\right)",
+   "ascii": "(0,0),(2,-4)"
+  },
+  {
+   "id": "set",
+   "keys": [
+    "-1,0,1"
+   ],
+   "set": null,
+   "latex": "-1,0,1",
+   "ascii": "-1,0,1"
+  },
+  {
+   "id": "dne",
+   "keys": [
+    "DNE"
+   ],
+   "set": null,
+   "latex": "DNE",
+   "ascii": "D N E"
+  },
+  {
+   "id": "none",
+   "keys": [
+    "none"
+   ],
+   "set": null,
+   "latex": "none",
+   "ascii": "n o n e"
+  },
+  {
+   "id": "vector",
+   "keys": null,
+   "set": "\\langle 1,-2,3\\rangle",
+   "latex": "\\langle1,-2,3\\rangle",
+   "ascii": "\u27e81,-2,3\u27e9"
+  },
+  {
+   "id": "matrix",
+   "keys": null,
+   "set": "\\begin{bmatrix}1 & 2\\\\ 3 & 4\\end{bmatrix}",
+   "latex": "\\begin{bmatrix}1 & 2\\\\ 3 & 4\\end{bmatrix}",
+   "ascii": "[[1,2],[3,4]]"
+  },
+  {
+   "id": "cdot",
+   "keys": null,
+   "set": "2\\cdot x",
+   "latex": "2\\cdot x",
+   "ascii": "2 * x"
+  },
+  {
+   "id": "antiderivative",
+   "keys": [
+    "x^3",
+    "{ArrowRight}",
+    "/3",
+    "{ArrowRight}",
+    "+C"
+   ],
+   "set": null,
+   "latex": "\\frac{x^3}{3}+C",
+   "ascii": "(x^3)/(3)+C"
+  },
+  {
+   "id": "exp-frac",
+   "keys": null,
+   "set": "e^{\\frac{x}{2}}",
+   "latex": "e^{\\frac{x}{2}}",
+   "ascii": "e^((x)/(2))"
+  },
+  {
+   "id": "decimal",
+   "keys": [
+    "0.333"
+   ],
+   "set": null,
+   "latex": "0.333",
+   "ascii": "0.333"
+  },
+  {
+   "id": "negative-fraction",
+   "keys": [
+    "-2/3"
+   ],
+   "set": null,
+   "latex": "-\\frac23",
+   "ascii": "-(2)/(3)"
+  },
+  {
+   "id": "theta",
+   "keys": [
+    "theta"
+   ],
+   "set": null,
+   "latex": "\\theta",
+   "ascii": "theta"
+  },
+  {
+   "id": "degrees",
+   "keys": null,
+   "set": "30^{\\circ}",
+   "latex": "30^{\\circ}",
+   "ascii": "30^@"
+  },
+  {
+   "id": "xy",
+   "keys": [
+    "xy"
+   ],
+   "set": null,
+   "latex": "xy",
+   "ascii": "x y"
+  },
+  {
+   "id": "two-pi-x",
+   "keys": [
+    "2pix"
+   ],
+   "set": null,
+   "latex": "2\\pi x",
+   "ascii": "2pi x"
+  },
+  {
+   "id": "mixed-number",
+   "keys": null,
+   "set": "3\\frac{1}{2}",
+   "latex": "3\\frac12",
+   "ascii": "3(1)/(2)"
+  },
+  {
+   "id": "fraction-times-x",
+   "keys": null,
+   "set": "\\frac{1}{2}x",
+   "latex": "\\frac12x",
+   "ascii": "(1)/(2)x"
+  },
+  {
+   "id": "sqrt-over-2-times-sin",
+   "keys": null,
+   "set": "\\frac{\\sqrt{x}}{2}\\sin\\left(x\\right)",
+   "latex": "\\frac{\\sqrt{x}}{2}\\sin\\left(x\\right)",
+   "ascii": "(sqrt(x))/(2)sin (x)"
+  },
+  {
+   "id": "empty-set",
+   "keys": null,
+   "set": "\\emptyset",
+   "latex": "\\emptyset",
+   "ascii": "O/"
+  },
+  {
+   "id": "set-braces",
+   "keys": null,
+   "set": "\\left\\lbrace 1,2\\right\\rbrace",
+   "latex": "\\left\\lbrace1,2\\right\\rbrace",
+   "ascii": "{1,2}"
+  },
+  {
+   "id": "x-sin-x",
+   "keys": [
+    "x",
+    "sin(x)"
+   ],
+   "set": null,
+   "latex": "x\\sin\\left(x\\right)",
+   "ascii": "x sin (x)"
+  }
+ ]
+}

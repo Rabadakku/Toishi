@@ -1,0 +1,544 @@
+# Probe cases from the full evidence review (docs/research/notes/Toishi full evidence
+# review/scripts/battery*.py and their .out files), with the verdicts ADR-0019 items 10 and 11
+# require. Rows marked CHANGED had a different verdict in the probe output; the reason follows.
+
+[[group]]
+name = "probe-e-notation"
+type = "number"
+key = "12000"
+cases = [
+  ["1.2e4", "correct"],  # CHANGED (B30): e-notation is accepted
+  ["1.2*10^4", "correct"],
+  ["1.2×10^4", "correct"],
+  ["1.2x10^4", "invalid"],
+  ["1,000", "invalid"],
+]
+
+[[group]]
+name = "probe-e-notation-large"
+type = "number"
+key = "10^100"
+cases = [
+  ["1e100", "correct"],  # CHANGED (battery.py): e-notation is accepted
+  ["10^100+1", "incorrect"],
+  ["10^100+10^50", "incorrect"],
+]
+
+[[group]]
+name = "probe-interval-undeclared"  # battery6 V4-V7, STACK #1061
+type = "interval"
+key = "(1, inf)"
+cases = [
+  ["t > 1", "invalid"],  # CHANGED (V4): no declared variable, so no letters
+  ["(1, inf)", "correct"],
+  ["x > 1 and y > 1", "invalid"],  # CHANGED (V6): two names were accepted
+  ["x > 1 or t < 0", "invalid"],  # CHANGED (V7, was incorrect): undeclared letters
+]
+
+[[group]]
+name = "probe-interval-declared"  # battery6 V1-V3
+type = "interval"
+key = "(1, inf)"
+opts = { vars = ["sigma"] }
+cases = [
+  ["sigma > 1", "correct"],
+  ["x > 1", "invalid"],
+  ["t > 1", "invalid"],
+  ["sigma > 1 and x > 1", "invalid"],
+]
+
+[[group]]
+name = "probe-intervals-battery2"  # battery2 D1-D10
+type = "interval"
+key = "[1, 3) U (3, 5]"
+opts = { vars = ["x"] }
+cases = [
+  ["1 <= x <= 5 and x != 3", "correct"],
+  ["1<=x<5 and x!=3", "incorrect"],
+  ["[1,3) ∪ (3,5]", "correct"],
+]
+
+[[group]]
+name = "probe-interval-ray"
+type = "interval"
+key = "(-inf, 2]"
+opts = { vars = ["x"] }
+cases = [
+  ["x<=2", "correct"],
+  ["x<2", "incorrect"],
+]
+
+[[group]]
+name = "probe-interval-open"
+type = "interval"
+key = "(1, 3)"
+opts = { vars = ["x"] }
+cases = [
+  ["1<x<3", "correct"],
+  ["(1,3]", "incorrect"],
+  ["(1.0000000001, 3)", "incorrect"],
+]
+
+[[group]]
+name = "probe-interval-merge"
+type = "interval"
+key = "[0, 1] U [1, 2]"
+cases = [
+  ["[0,2]", "correct"],
+]
+
+[[group]]
+name = "probe-interval-gap"
+type = "interval"
+key = "(0, 1) U (1, 2)"
+cases = [
+  ["(0,2)", "incorrect"],
+]
+
+[[group]]
+name = "probe-interval-punctured"
+type = "interval"
+key = "(-inf, 0) U (0, inf)"
+opts = { vars = ["x"] }
+cases = [
+  ["x < 0 or x > 0", "correct"],
+  ["(-inf, inf)", "incorrect"],
+]
+
+[[group]]
+name = "probe-interval-empty"
+type = "interval"
+key = "none"
+cases = [
+  ["empty", "correct"],
+]
+
+[[group]]
+name = "probe-tolerance-third"  # battery3 C1-C3, C13-C14
+type = "number"
+key = "1/3"
+cases = [
+  ["0.333", "correct"],
+  ["0.3333", "correct"],
+  ["0.33", "correct"],  # CHANGED (C3): exactly 1% off, inside the 1% default
+  ["0.329", "incorrect"],
+  ["33/100", "incorrect"],  # exact answers stay exact
+]
+
+[[group]]
+name = "probe-tolerance-two-thirds"  # battery3 C4-C6
+type = "number"
+key = "2/3"
+cases = [
+  ["0.667", "correct"],
+  ["0.67", "correct"],  # CHANGED (C5): 0.5% off
+  ["0.66", "correct"],  # CHANGED (C6): exactly 1% off
+  ["0.65", "incorrect"],
+]
+
+[[group]]
+name = "probe-tolerance-root-two"  # battery3 C7-C8
+type = "number"
+key = "sqrt(2)"
+cases = [
+  ["1.414", "correct"],
+  ["1.41", "correct"],  # CHANGED (C8): 0.3% off
+  ["1.4", "incorrect"],
+]
+
+[[group]]
+name = "probe-tolerance-pi"  # battery3 C9-C10, battery.py pi rows
+type = "number"
+key = "pi"
+cases = [
+  ["22/7", "incorrect"],
+  ["355/113", "incorrect"],
+  ["3.14159265", "correct"],
+  ["3.14", "correct"],
+  ["3.1", "incorrect"],
+]
+
+[[group]]
+name = "probe-tolerance-e-notation-option"  # battery3 C11
+type = "number"
+key = "pi"
+opts = { tolerance = "1e-9" }
+cases = [
+  ["355/113", "incorrect"],  # CHANGED (C11, was undecidable: the card's tolerance line was rejected)
+  ["3.1415926536", "correct"],
+  ["3.14159", "incorrect"],
+]
+
+[[group]]
+name = "probe-tolerance-exact-flag"  # battery3 C12-C14
+type = "number"
+key = "1/3"
+opts = { exact = true }
+cases = [
+  ["0.3333", "incorrect"],
+  ["2/6", "correct"],
+]
+
+[[group]]
+name = "probe-tolerance-hundred"  # battery3 C15-C16
+type = "number"
+key = "100"
+cases = [
+  ["100.05", "correct"],
+  ["100.2", "correct"],  # CHANGED (C16): 0.2% off
+  ["101.5", "incorrect"],
+]
+
+[[group]]
+name = "probe-tolerance-tiny"  # battery.py tiny rows
+type = "number"
+key = "0"
+cases = [
+  ["10^(-30)", "incorrect"],
+  ["0.0000001", "incorrect"],
+  ["0.0", "correct"],
+  ["exp(-1000)", "incorrect"],
+]
+
+[[group]]
+name = "probe-sig-figs"  # STACK #107 (R3.2): 0.1667 at 4 significant figures
+type = "number"
+key = "0.1667"
+opts = { sig_figs = 4 }
+cases = [
+  ["0.1667", "correct"],
+  ["0.1666", "incorrect"],
+  ["0.167", "incorrect"],
+  ["1.667e-1", "correct"],
+  ["0.16670", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-2sqrt2"  # battery4 S1a-S1f, battery5 T13
+type = "number"
+key = "2*sqrt(2)"
+opts = { form = "simplified" }
+cases = [
+  ["sqrt(8)", "incorrect"],  # CHANGED (S1a): a square factor under the root
+  ["2*sqrt(2)", "correct"],
+  ["4/sqrt(2)", "incorrect"],  # CHANGED (S1c): a radical in the denominator
+  ["sqrt(2)*2", "correct"],
+  ["sqrt(2)+sqrt(2)", "incorrect"],
+  ["2^(3/2)", "incorrect"],
+]
+
+[[group]]
+name = "probe-simplified-2sqrt2-no-form"  # battery5 T13
+type = "number"
+key = "2*sqrt(2)"
+cases = [
+  ["sqrt(8)", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-radicals"  # battery5 T1-T6, T12, battery4 S5
+type = "number"
+key = "2*sqrt(3)"
+opts = { form = "simplified" }
+cases = [
+  ["sqrt(12)", "incorrect"],  # CHANGED (T2)
+  ["6/sqrt(3)", "incorrect"],  # CHANGED (T3)
+  ["2sqrt(3)", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-3sqrt5"
+type = "number"
+key = "3*sqrt(5)"
+opts = { form = "simplified" }
+cases = [
+  ["sqrt(45)", "incorrect"],  # CHANGED (T4)
+  ["3sqrt(5)", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-5sqrt2-over-2"
+type = "number"
+key = "5*sqrt(2)/2"
+opts = { form = "simplified" }
+cases = [
+  ["5/sqrt(2)", "incorrect"],  # CHANGED (T5)
+  ["sqrt(50)/2", "incorrect"],  # CHANGED (T6)
+  ["5sqrt(2)/2", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-rationalized"
+type = "number"
+key = "sqrt(3)/3"
+opts = { form = "simplified" }
+cases = [
+  ["1/sqrt(3)", "incorrect"],  # CHANGED (T12)
+  ["sqrt(3)/3", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-root2-over-2"
+type = "number"
+key = "sqrt(2)/2"
+opts = { form = "simplified" }
+cases = [
+  ["1/sqrt(2)", "incorrect"],  # CHANGED (S5)
+  ["sqrt(2)/2", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-root2"  # battery5 T1
+type = "number"
+key = "sqrt(2)"
+opts = { form = "simplified" }
+cases = [
+  ["2/sqrt(2)", "incorrect"],
+]
+
+[[group]]
+name = "probe-simplified-other"  # battery5 T8-T11, battery4 S5b
+type = "expression"
+key = "2*x"
+opts = { form = "simplified" }
+cases = [
+  ["x+x", "incorrect"],
+  ["2x", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-fractions"
+type = "number"
+key = "7/3"
+opts = { form = "simplified" }
+cases = [
+  ["2+1/3", "incorrect"],
+  ["7/3", "correct"],
+]
+
+[[group]]
+name = "probe-simplified-half"
+type = "number"
+key = "1/2"
+opts = { form = "simplified" }
+cases = [
+  ["3/6", "incorrect"],
+  ["2/4", "incorrect"],
+]
+
+[[group]]
+name = "probe-forms-factored"  # battery4 S2a-S2g
+type = "expression"
+key = "(x+1)^2"
+opts = { form = "factored" }
+cases = [
+  ["x^2+2x+1", "incorrect"],
+  ["(x+1)*(x+1)", "correct"],
+  ["(x+1)^2", "correct"],
+  ["1*(x+1)^2", "correct"],
+  ["x*(x+2)+1", "incorrect"],
+]
+
+[[group]]
+name = "probe-forms-expanded"  # battery4 S3a-S3e
+type = "expression"
+key = "x^2+2x+1"
+opts = { form = "expanded" }
+cases = [
+  ["(x+1)^2", "incorrect"],
+  ["x*x+2*x+1", "correct"],
+  ["1+2*x+x^2", "correct"],
+  ["x^2+x+x+1", "correct"],
+  ["x^2+2*x+1+0", "correct"],
+]
+
+[[group]]
+name = "probe-forms-lowest-terms"  # battery4 S4a-S4h
+type = "number"
+key = "3/4"
+opts = { form = "lowest-terms" }
+cases = [
+  ["6/8", "incorrect"],
+  ["3/4", "correct"],
+  ["0.75", "incorrect"],
+  ["-3/-4", "incorrect"],
+  ["1.5/2", "incorrect"],
+  ["(3/4)", "correct"],
+  ["1/2+1/4", "incorrect"],
+]
+
+[[group]]
+name = "probe-holes"  # battery2 A1-A14, battery.py hole rows (ADR-0019 item 10)
+type = "expression"
+key = "x + 1"
+cases = [
+  ["(x^2-1)/(x-1)", "invalid"],  # CHANGED (A9): hole-only, no attempt
+  ["x+1", "correct"],
+]
+
+[[group]]
+name = "probe-holes-key-has-the-hole"
+type = "expression"
+key = "(x^2-1)/(x-1)"
+cases = [
+  ["x+1", "correct"],
+  ["(x+1)*(x-1)/(x-1)", "correct"],
+]
+
+[[group]]
+name = "probe-holes-periodic"  # battery2 A3
+type = "expression"
+key = "1/(1-cos(x))"
+cases = [
+  ["(1+cos(x))/sin(x)^2", "invalid"],  # CHANGED (A3): a natural rewrite, hole-only
+]
+
+[[group]]
+name = "probe-holes-rational"  # battery2 A4-A5, A13-A14
+type = "expression"
+key = "1/(x-1)"
+cases = [
+  ["x/(x^2-x)", "invalid"],  # CHANGED (A4)
+]
+
+[[group]]
+name = "probe-holes-rational-key"
+type = "expression"
+key = "x/(x^2-x)"
+cases = [
+  ["1/(x-1)", "correct"],
+]
+
+[[group]]
+name = "probe-holes-regions"  # battery2 A6-A7: a region is not a hole
+type = "expression"
+key = "ln(x^2)"
+cases = [
+  ["2*ln(x)", "incorrect"],
+]
+
+[[group]]
+name = "probe-holes-regions-other-way"
+type = "expression"
+key = "2*ln(x)"
+cases = [
+  ["ln(x^2)", "correct"],
+]
+
+[[group]]
+name = "probe-holes-tan-cos"  # battery2 A11-A12
+type = "expression"
+key = "sin(x)"
+cases = [
+  ["tan(x)*cos(x)", "invalid"],  # CHANGED (A11)
+]
+
+[[group]]
+name = "probe-holes-tan-cos-domain"
+type = "expression"
+key = "sin(x)"
+opts = { domain = "-1 < x < 1" }
+cases = [
+  ["tan(x)*cos(x)", "correct"],
+]
+
+[[group]]
+name = "probe-holes-strict"  # a domain the card declares strict is still enforced
+type = "expression"
+key = "x + 1"
+opts = { domain_strict = true }
+cases = [
+  ["(x^2-1)/(x-1)", "incorrect"],
+  ["x + 1", "correct"],
+]
+
+[[group]]
+name = "probe-holes-identity"  # battery.py trig rows
+type = "expression"
+key = "1"
+opts = { vars = ["x"] }
+cases = [
+  ["sin(x)^2+cos(x)^2", "correct"],
+  ["sec(x)^2-tan(x)^2", "invalid"],  # CHANGED: hole-only
+]
+
+[[group]]
+name = "probe-holes-antiderivative"  # battery.py antiderivative rows
+type = "antiderivative"
+key = "ln(abs(x)) + C"
+cases = [
+  ["ln(x)", "incorrect"],  # a region (x < 0), not a hole
+  ["ln(abs(x))", "correct"],
+  ["ln(x^2)/2 + 7", "correct"],
+]
+
+[[group]]
+name = "probe-holes-antiderivative-jump"
+type = "antiderivative"
+key = "arctan(x) + C"
+cases = [
+  ["-arctan(1/x)", "incorrect"],  # a jump at 0, not a removable point
+  ["arctan(x) + 5", "correct"],
+]
+
+[[group]]
+name = "probe-holes-equation"  # battery2 F2-F3
+type = "equation"
+key = "y = x^2"
+cases = [
+  ["y/x^2 = 1", "invalid"],  # CHANGED (F3): one point of the graph left out
+  ["x^2 = y", "correct"],
+]
+
+[[group]]
+name = "probe-holes-equation-region"
+type = "equation"
+key = "x^2 + y^2 = 1"
+cases = [
+  ["y = sqrt(1-x^2)", "incorrect"],
+]
+
+[[group]]
+name = "probe-real-domain"  # battery5 U9-U17
+type = "expression"
+key = "sqrt(x*y)"
+opts = { vars = ["x", "y"] }
+cases = [
+  ["sqrt(x)*sqrt(y)", "incorrect"],
+]
+
+[[group]]
+name = "probe-real-domain-2"
+type = "expression"
+key = "x^x"
+cases = [
+  ["exp(x*ln(x))", "incorrect"],
+]
+
+[[group]]
+name = "probe-real-domain-3"
+type = "expression"
+key = "x^x"
+opts = { domain = "x > 0" }
+cases = [
+  ["exp(x*ln(x))", "correct"],
+]
+
+[[group]]
+name = "probe-tiny-differences"  # battery5 U1-U8, battery3 H1-H4
+type = "number"
+key = "1"
+cases = [
+  ["1+10^(-300)", "incorrect"],
+  ["1+10^(-45)", "incorrect"],
+  ["cos(1)^2+sin(1)^2", "correct"],
+]
+
+[[group]]
+name = "probe-tiny-differences-x"
+type = "expression"
+key = "x"
+cases = [
+  ["x+exp(-1000*x^2)", "incorrect"],
+  ["x+sin(10^6*x)*10^(-12)", "incorrect"],
+]

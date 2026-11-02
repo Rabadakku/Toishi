@@ -1,0 +1,7 @@
+{
+  "id": "test",
+  "title": "Test pack",
+  "version": "1.0.0",
+  "license": "personal (original content written for Toishi)",
+  "description": "A small pack that exercises every card kind, every supported answer type, step tags, templates, a multi-part problem, find-the-error and which-method cards, and a tiny skill graph."
+}

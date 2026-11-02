@@ -1,0 +1,137 @@
+[project]
+name = "toishi"
+version = "0.1.0"
+description = "Free, offline practice app for STEM problems: spaced repetition, free recall and mixed problem sets, planned by a student model."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.14,<3.15"
+# Runtime dependencies. Every direct dependency is pinned exactly; uv.lock pins the rest.
+dependencies = [
+    "fsrs==6.3.2",
+    "sympy==1.14.0",
+    "mpmath==1.3.0",  # sympy 1.14.0 requires mpmath<1.4 (see ADR-0001)
+    "lark==1.3.1",
+    "platformdirs==4.14.2",
+    "zstandard==0.25.0",
+    "pywebview==6.2.1",
+    # Fits FSRS-6 parameters (ENG-12); ships with the app (ADR-0013). No declared license.
+    "fsrs-rs-python==0.9.3",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
+    "import-linter==2.15",
+    # 1.63.0, not 1.64.1: matches the browsers preinstalled in the Linux workspace (see ADR-0001).
+    "playwright==1.63.0",
+    "pyinstaller==6.22.3; sys_platform == 'darwin'",
+    "hypothesis==6.170.14",  # property tests for the answer checker (MATH-12)
+    # AGPL, dev only (ADR-0015): builds the Anki fixture decks and is the rendering oracle in
+    # tests/importers. Never imported by core/ or app/ (import-linter) and excluded from the .app.
+    "anki==26.9.3",
+]
+# Only for the M0 shell spike (spike/qt). Never imported by core/ or app/.
+spike-qt = [
+    "PySide6-Essentials==6.12.0",
+    "PySide6-WebEngine==6.12.0.140",
+]
+
+[tool.uv]
+package = false
+default-groups = ["dev"]
+required-version = ">=0.13.6"
+# Resolve only for the platforms we use: his Apple-silicon Mac and the Linux workspace.
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux'",
+]
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["web", "app/web_dist", "build", "dist", "docs/research/reference-code", "docs/research/notes"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "TID", "SIM", "RUF", "PT", "PTH"]
+ignore = [
+    "S603", # subprocess call without shell: we call our own binaries/scripts
+    "S607", # partial executable path (git, bash) is fine in tests and scripts
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+# ADR-0003: nothing typed by the user is ever evaluated as code.
+# S102 (exec) and S307 (eval) come from the "S" rules above; these add SymPy's string evaluators.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sympy.sympify".msg = "ADR-0003: sympify() evaluates strings with eval. Build SymPy objects explicitly."
+"sympy.core.sympify".msg = "ADR-0003: sympify() evaluates strings with eval."
+"sympy.parse_expr".msg = "ADR-0003: parse_expr() evaluates strings with eval."
+"sympy.parsing".msg = "ADR-0003: sympy.parsing evaluates strings. Use our own Lark grammar."
+"sympy.lambdify".msg = "ADR-0003: lambdify exec()s generated source; symbol names could inject code."
+"sympy.utilities.lambdify".msg = "ADR-0003: lambdify exec()s generated source."
+"builtins.eval".msg = "ADR-0003: eval is banned."
+"builtins.exec".msg = "ADR-0003: exec is banned."
+"builtins.compile".msg = "ADR-0003: compile is banned."
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.14"
+files = ["core", "app", "tests", "scripts", "tools"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["sympy", "sympy.*", "mpmath", "mpmath.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+markers = [
+    "ui: needs the built web UI (app/web_dist) and a Playwright browser",
+    "slow: long benchmarks; run in full mode, skipped by the fast pre-commit check",
+]
+
+# ---------------------------------------------------------------- import-linter
+[tool.importlinter]
+root_packages = ["core", "app", "tools"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "core/ is pure Python: no app/, no GUI toolkit"
+type = "forbidden"
+source_modules = ["core"]
+forbidden_modules = ["app", "webview", "PySide6", "objc", "AppKit", "Foundation", "WebKit"]
+
+[[tool.importlinter.contracts]]
+name = "No anki (AGPL dev-only test oracle) in core/ or app/"
+type = "forbidden"
+source_modules = ["core", "app"]
+forbidden_modules = ["anki", "aqt"]
+
+[[tool.importlinter.contracts]]
+name = "Development tools (tools/) are never imported by core/ or app/"
+type = "forbidden"
+source_modules = ["core", "app"]
+forbidden_modules = ["tools"]
+
+[[tool.importlinter.contracts]]
+name = "Only app.shell may import pywebview directly"
+type = "forbidden"
+source_modules = ["app.main", "app.api", "app.paths"]
+forbidden_modules = ["webview", "objc", "AppKit", "Foundation", "WebKit"]
+allow_indirect_imports = true

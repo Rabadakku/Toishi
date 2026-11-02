@@ -1,0 +1,7 @@
+{
+  "id": "calc1",
+  "title": "Calculus I",
+  "version": "0.1.0",
+  "license": "CC BY-NC-SA 4.0",
+  "description": "The Calculus I component map: every procedure, rule, fact and setup move that Calculus I solutions use, as skills with prerequisites, confusable pairs and method choices, plus the precalculus steps they rely on. No problems yet. The map's structure is original; its section numbering and section titles follow OpenStax Calculus Volume 1 (Gilbert Strang, Edwin Herman; OpenStax, Rice University; CC BY-NC-SA 4.0). CLP-1 Differential Calculus and CLP-2 Integral Calculus (Joel Feldman, Andrew Rechnitzer, Elyse Yeager; University of British Columbia; CC BY-NC-SA 4.0) are the second references."
+}

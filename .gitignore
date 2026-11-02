@@ -1,0 +1,23 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
+
+# Web
+web/node_modules/
+app/web_dist/
+
+# Builds
+build/
+dist/
+
+# macOS
+.DS_Store
+logs/
+
+# Mac runner requests and status (scripts/mac-runner.sh)
+.runner/

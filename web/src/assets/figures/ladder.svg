@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" width="320" height="200" role="img" aria-label="A ladder leaning against a wall">
+  <g fill="none" stroke="#7d848c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 170 H290"/>
+    <path d="M250 170 V24"/>
+  </g>
+  <g stroke="#4a86c8" stroke-width="4" stroke-linecap="round">
+    <path d="M96 170 L250 52"/>
+  </g>
+  <g fill="none" stroke="#7d848c" stroke-width="2">
+    <path d="M118 170 A22 22 0 0 0 112.600 155.500"/>
+  </g>
+  <g fill="#7d848c" font-family="Georgia, serif" font-size="15">
+    <text x="128" y="164">40°</text>
+    <text x="140" y="104">6 m</text>
+    <text x="258" y="118">h</text>
+  </g>
+  <g fill="none" stroke="#7d848c" stroke-width="1.5" stroke-dasharray="4 4">
+    <path d="M250 52 V170"/>
+  </g>
+</svg>

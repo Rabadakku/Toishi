@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly repo backup (scripts/backup.sh). launchd does not expand ~ or $HOME, so
+  install it with the placeholders filled in; see "Nightly backup" in README.md.
+  If the Mac is asleep at the scheduled time, launchd runs the job on wake.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.toishi.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>21</integer>
+    <key>Minute</key>
+    <integer>37</integer>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/toishi-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/toishi-backup.log</string>
+</dict>
+</plist>

@@ -1,0 +1,12 @@
+#separator:tab
+#html:true
+#guid column:1
+#notetype column:2
+#deck column:3
+#tags column:7
+"I}*#u*8&l8"	Basic	Lang::Spanish	"Hola <img src=""pic.png"">"	Hello &amp; welcome<br>[sound:sound.mp3]		es::basics greeting
+mwac]}+co}	Basic (and reversed card)	Lang::Spanish	perro	dog		
+"yGsFa0#A9M"	Basic (optional reversed card)	Lang::Spanish	gato	cat	y	
+kRwUy1hPhc	Basic (optional reversed card)	Lang::Spanish	casa	house		
+"xdSQ;/|No#"	Basic (type in the answer)	Lang::Spanish	2 + 2	cuatro		
+dKRXNMjaWY	Basic	Lang::Math	"<b onclick=""steal()"">Square</b> \(x^2\)<script>alert(1)</script>"	"<img src=""café.png""> <a href=""https://example.com"">link</a>"		

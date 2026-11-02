@@ -1,0 +1,882 @@
+# Golden cases (MATH-11): expressions and the known traps.
+
+[[group]]
+name = "difference of squares"
+type = "expression"
+key = "x^2 - 4"
+cases = [
+  ["(x-2)(x+2)", "correct"],
+  ["(x+2)(x-2)", "correct"],
+  ["x^2-4", "correct"],
+  ["x*x - 4", "correct"],
+  ["x^2 - 2^2", "correct"],
+  ["-4 + x^2", "correct"],
+  ["x^2 + 4", "incorrect"],
+  ["x^2 - 2", "incorrect"],
+  ["(x-2)^2", "incorrect"],
+  ["x^2 - 4x", "incorrect"],
+  ["(x-2)(x+3)", "incorrect"],
+  ["x^2 - 4.0", "correct"],
+  ["x^2 - 4.001", "incorrect"],
+  ["x**2 - 4", "correct"],
+  ["x² - 4", "correct"],
+  ["y^2 - 4", "invalid"],
+  ["X^2 - 4", "invalid"],
+  ["x2 - 4", "invalid"],
+  ["x^ - 4", "incorrect"],
+  ["x^2 - 4 = 0", "invalid"],
+  ["x^2, -4", "invalid"],
+  ["(x - 2)(x + 2", "invalid"],
+]
+
+[[group]]
+name = "perfect square"
+type = "expression"
+key = "(x+1)^2"
+cases = [
+  ["x^2+2x+1", "correct"],
+  ["(1+x)^2", "correct"],
+  ["(x+1)(x+1)", "correct"],
+  ["x^2+1", "incorrect"],
+  ["x^2+2x+2", "incorrect"],
+  ["(x-1)^2", "incorrect"],
+  ["(x+1)^3", "incorrect"],
+  ["x^2 + 2*x + 1", "correct"],
+  ["(-x-1)^2", "correct"],
+  ["x(x+2)+1", "correct"],
+]
+
+[[group]]
+name = "quadratic"
+type = "expression"
+key = "3x^2 - 2x + 5"
+cases = [
+  ["5 - 2x + 3x^2", "correct"],
+  ["3x^2+2x+5", "incorrect"],
+  ["3x^2-2x+4", "incorrect"],
+  ["2x^2-2x+5", "incorrect"],
+  ["3x^2-2x", "incorrect"],
+  ["x(3x-2)+5", "correct"],
+  ["3*x^2 - 2*x + 5", "correct"],
+  ["4x^2 - 2x + 5", "incorrect"],
+  ["3x^2 - 3x + 5", "incorrect"],
+  ["3x^2 - x + 5", "incorrect"],
+  ["-3x^2 + 2x - 5", "incorrect"],
+]
+
+[[group]]
+name = "chain rule derivative"
+type = "expression"
+key = "6x(x^2 + 1)^2"
+cases = [
+  ["6x(x^2+1)^2", "correct"],
+  ["6x^5+12x^3+6x", "correct"],
+  ["6x*(x^2+1)*(x^2+1)", "correct"],
+  ["6x(x^2+1)", "incorrect"],
+  ["3x(x^2+1)^2", "incorrect"],
+  ["6x(x^2+1)^3", "incorrect"],
+  ["6(x^2+1)^2", "incorrect"],
+  ["3(x^2+1)^2*2x", "correct"],
+  ["2x*3(x^2+1)^2", "correct"],
+  ["3(x^2+1)^2", "incorrect"],
+]
+
+[[group]]
+name = "removable discontinuity in the answer"
+type = "expression"
+key = "x + 1"
+cases = [
+  ["(x^2-1)/(x-1)", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["(x^2+2x+1)/(x+1)", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["(x^2-1)/(x+1)", "incorrect"],
+  ["x + 1 + 0*x", "correct"],
+  ["(x^3+1)/(x^2-x+1)", "correct"],
+]
+
+[[group]]
+name = "removable discontinuity in the key"
+type = "expression"
+key = "(x^2-1)/(x-1)"
+cases = [
+  ["x+1", "correct"],
+  ["x-1", "incorrect"],
+  ["(x+1)(x-1)/(x-1)", "correct"],
+]
+
+[[group]]
+name = "rational function"
+type = "expression"
+key = "1/(x-1)"
+cases = [
+  ["1/(x-1)", "correct"],
+  ["-1/(1-x)", "correct"],
+  ["1/x - 1", "incorrect"],
+  ["(x+1)/(x^2-1)", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["1/(x+1)", "incorrect"],
+  ["(x-1)^-1", "correct"],
+  ["1/x-1", "incorrect"],
+]
+
+[[group]]
+name = "split fraction"
+type = "expression"
+key = "(2x+3)/(x^2+1)"
+cases = [
+  ["2x/(x^2+1) + 3/(x^2+1)", "correct"],
+  ["(3+2x)/(1+x^2)", "correct"],
+  ["(2x+3)/(x^2-1)", "incorrect"],
+  ["2x+3/(x^2+1)", "incorrect"],
+]
+
+[[group]]
+name = "two variables"
+type = "expression"
+key = "x^2*y + x*y^2"
+opts = { vars = ["x", "y"] }
+cases = [
+  ["xy(x+y)", "invalid"],
+  ["x*y*(x+y)", "correct"],
+  ["x*y(x+y)", "correct"],
+  ["x^2*y + x*y^2", "correct"],
+  ["x*y*(x-y)", "incorrect"],
+  ["x^2*y", "incorrect"],
+  ["y*x*(y+x)", "correct"],
+  ["x y (x+y)", "invalid"],
+]
+
+[[group]]
+name = "linear in two variables"
+type = "expression"
+key = "2x + 3y"
+cases = [
+  ["3y+2x", "correct"],
+  ["2(x+y)+y", "correct"],
+  ["3x+2y", "incorrect"],
+  ["2x+3z", "invalid"],
+]
+
+[[group]]
+name = "exponential"
+type = "expression"
+key = "e^x"
+cases = [
+  ["e^x", "correct"],
+  ["exp(x)", "correct"],
+  ["e^(x)", "correct"],
+  ["2.718^x", "incorrect"],
+  ["2.71828^x", "incorrect"],
+  ["e*x", "incorrect"],
+  ["ex", "invalid"],
+  ["x^e", "incorrect"],
+  ["e^-x", "incorrect"],
+  ["1/e^(-x)", "correct"],
+  ["(e^(x/2))^2", "correct"],
+  ["sqrt(e^(2x))", "correct"],
+  ["e^x*e^0", "correct"],
+  ["e^(x+1)/e", "correct"],
+]
+
+[[group]]
+name = "e to the 2x"
+type = "expression"
+key = "e^(2x)"
+cases = [
+  ["e^(2x)", "correct"],
+  ["(e^x)^2", "correct"],
+  ["e^x*e^x", "correct"],
+  ["e^2x", "incorrect"],
+  ["e^(2*x)", "correct"],
+  ["exp(2x)", "correct"],
+  ["e^2^x", "incorrect"],
+  ["2e^x", "incorrect"],
+  ["e^(x)^2", "incorrect"],
+  ["e^(x+x)", "correct"],
+]
+
+[[group]]
+name = "e squared times x"
+type = "expression"
+key = "e^2*x"
+cases = [
+  ["e^2x", "correct"],
+  ["x*e^2", "correct"],
+  ["e^(2x)", "incorrect"],
+  ["e^2*x", "correct"],
+]
+
+[[group]]
+name = "x e to the x"
+type = "expression"
+key = "x*e^x"
+cases = [
+  ["xe^x", "invalid"],
+  ["x*e^x", "correct"],
+  ["x e^x", "invalid"],
+  ["e^x*x", "correct"],
+  ["x(e^x)", "correct"],
+  ["(e^x)x", "correct"],
+]
+
+[[group]]
+name = "gaussian"
+type = "expression"
+key = "e^(-x^2)"
+cases = [
+  ["e^(-x^2)", "correct"],
+  ["1/e^(x^2)", "correct"],
+  ["e^-x^2", "correct"],
+  ["e^(-x)^2", "incorrect"],
+  ["exp(-x^2)", "correct"],
+  ["e^(x^2)", "incorrect"],
+]
+
+[[group]]
+name = "ln of x squared"
+type = "expression"
+key = "ln(x^2)"
+cases = [
+  ["2ln|x|", "correct"],
+  ["2ln(abs(x))", "correct"],
+  ["2*ln(|x|)", "correct"],
+  ["ln(x^2)", "correct"],
+  ["2ln(x)", "incorrect"],
+  ["ln(x)^2", "incorrect"],
+  ["(ln(x))^2", "incorrect"],
+  ["ln(2x)", "incorrect"],
+  ["ln|x|^2", "invalid"],
+  ["2 ln|x|", "correct"],
+  ["ln(|x|^2)", "correct"],
+  ["ln(x*x)", "correct"],
+  ["ln|x| + ln|x|", "correct"],
+  ["ln(x) + ln(x)", "incorrect"],
+]
+
+[[group]]
+name = "ln of x squared for positive x"
+type = "expression"
+key = "ln(x^2)"
+opts = { domain = "x > 0" }
+cases = [
+  ["2ln(x)", "correct"],
+  ["2ln|x|", "correct"],
+  ["ln(x)+ln(x)", "correct"],
+  ["ln(2x)", "incorrect"],
+  ["ln(x)^2", "incorrect"],
+]
+
+[[group]]
+name = "two ln x has its own domain"
+type = "expression"
+key = "2ln(x)"
+cases = [
+  ["ln(x^2)", "correct"],
+  ["2ln|x|", "correct"],
+  ["ln(2x)", "incorrect"],
+]
+
+[[group]]
+name = "log base two"
+type = "expression"
+key = "ln(x)/ln(2)"
+cases = [
+  ["log_2(x)", "correct"],
+  ["ln(x)/ln(2)", "correct"],
+  ["log(x)/log(2)", "correct"],
+  ["ln(x)/2", "incorrect"],
+  ["log_2(2x) - 1", "correct"],
+  ["log_2x", "invalid"],
+  ["log2(x)", "invalid"],
+]
+
+[[group]]
+name = "common log"
+type = "expression"
+key = "log(x)"
+cases = [
+  ["ln(x)/ln(10)", "correct"],
+  ["log_10(x)", "correct"],
+  ["ln(x)", "incorrect"],
+  ["log_1(x)", "invalid"],
+]
+
+[[group]]
+name = "natural log"
+type = "expression"
+key = "ln(x)"
+cases = [
+  ["log_e(x)", "correct"],
+  ["-ln(1/x)", "correct"],
+  ["ln(x^2)/2", "correct"],
+  ["ln|x|", "correct"],
+  ["log(x)", "incorrect"],
+  ["ln(x)+1", "incorrect"],
+  ["lnx", "invalid"],
+  ["ln x", "invalid"],
+  ["ln(x", "invalid"],
+]
+
+[[group]]
+name = "log rules on a domain"
+type = "expression"
+key = "ln(x+1) - ln(x)"
+opts = { domain = "x > 0" }
+cases = [
+  ["ln((x+1)/x)", "correct"],
+  ["ln(1+1/x)", "correct"],
+  ["ln(x+1)/ln(x)", "incorrect"],
+  ["ln(1)", "incorrect"],
+]
+
+[[group]]
+name = "square root of x squared against x"
+type = "expression"
+key = "x"
+cases = [
+  ["sqrt(x^2)", "incorrect"],
+  ["abs(x)", "incorrect"],
+  ["sqrt(x)^2", "incorrect"],
+  ["(x^3)^(1/3)", "correct"],
+  ["root(x^3, 3)", "correct"],
+  ["x^(3/3)", "correct"],
+  ["x", "correct"],
+  ["-(-x)", "correct"],
+  ["x^1", "correct"],
+  ["e^(ln(x))", "incorrect"],
+  ["ln(e^x)", "correct"],
+]
+
+[[group]]
+name = "absolute value"
+type = "expression"
+key = "abs(x)"
+cases = [
+  ["sqrt(x^2)", "correct"],
+  ["|x|", "correct"],
+  ["|-x|", "correct"],
+  ["x", "incorrect"],
+  ["(x^2)^(1/2)", "correct"],
+  ["root(x^4, 4)", "correct"],
+  ["x*sign(x)", "correct"],
+  ["-x", "incorrect"],
+  ["|x", "invalid"],
+]
+
+[[group]]
+name = "square root of x squared for nonnegative x"
+type = "expression"
+key = "x"
+opts = { domain = "x >= 0" }
+cases = [
+  ["sqrt(x^2)", "correct"],
+  ["|x|", "correct"],
+  ["sqrt(x)^2", "correct"],
+  ["e^(ln(x))", "incorrect"],  # review: false accept (hole: undefined where the key is defined) at 0 (domain x >= 0)
+]
+
+[[group]]
+name = "square root"
+type = "expression"
+key = "sqrt(x)"
+cases = [
+  ["x^(1/2)", "correct"],
+  ["sqrt(|x|)", "correct"],
+  ["root(x, 2)", "correct"],
+  ["x^0.5", "correct"],
+  ["x/sqrt(x)", "incorrect"],  # review: false accept (hole: undefined where the key is defined) at 0
+  ["sqrt(x)/x", "incorrect"],
+  ["sqrtx", "invalid"],
+  ["sqrt x", "invalid"],
+]
+
+[[group]]
+name = "two root x"
+type = "expression"
+key = "2sqrt(x)"
+cases = [
+  ["sqrt(4x)", "correct"],
+  ["sqrt(2x)", "incorrect"],
+  ["2x^(1/2)", "correct"],
+  ["2*sqrt(x)", "correct"],
+]
+
+[[group]]
+name = "cube root of x"
+type = "expression"
+key = "root(x, 3)"
+cases = [
+  ["x^(1/3)", "correct"],
+  ["root(x,3)", "correct"],
+  ["-root(-x,3)", "correct"],
+  ["sign(x)*abs(x)^(1/3)", "correct"],
+  ["abs(x)^(1/3)", "incorrect"],
+  ["sqrt(x)", "incorrect"],
+  ["root(x)", "invalid"],
+  ["root(x, 3.5)", "incorrect"],
+]
+
+[[group]]
+name = "two thirds power"
+type = "expression"
+key = "x^(2/3)"
+cases = [
+  ["(x^2)^(1/3)", "correct"],
+  ["root(x,3)^2", "correct"],
+  ["root(x^2, 3)", "correct"],
+  ["abs(x)^(2/3)", "correct"],
+  ["x^(1/3)", "incorrect"],
+  ["(x^(1/3))^2", "correct"],
+]
+
+[[group]]
+name = "pythagorean identity"
+type = "expression"
+key = "1"
+opts = { vars = ["x"] }
+cases = [
+  ["sin(x)^2 + cos(x)^2", "correct"],
+  ["sec(x)^2 - tan(x)^2", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["cos(x)^2 - sin(x)^2", "incorrect"],
+  ["csc(x)^2 - cot(x)^2", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["1", "correct"],
+  ["x/x", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["(x-3)/(x-3)", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["|x|/x", "incorrect"],
+  ["sin(x)^2 + cos(x)^2 + 10^(-25)", "incorrect"],
+]
+
+[[group]]
+name = "double angle sine"
+type = "expression"
+key = "sin(2x)"
+cases = [
+  ["2sin(x)cos(x)", "correct"],
+  ["2*sin(x)*cos(x)", "correct"],
+  ["sin(x)cos(x)", "incorrect"],
+  ["2sin(x)", "incorrect"],
+  ["cos(2x)", "incorrect"],
+  ["sin(x+x)", "correct"],
+  ["sin2x", "invalid"],
+  ["sin 2x", "invalid"],
+  ["2cos(x)sin(x)", "correct"],
+]
+
+[[group]]
+name = "double angle cosine"
+type = "expression"
+key = "cos(2x)"
+cases = [
+  ["cos(x)^2 - sin(x)^2", "correct"],
+  ["1 - 2sin(x)^2", "correct"],
+  ["2cos(x)^2 - 1", "correct"],
+  ["1 - sin(x)^2", "incorrect"],
+  ["cos(x)^2", "incorrect"],
+  ["2cos(x) - 1", "incorrect"],
+  ["cos^2(x) - sin^2(x)", "invalid"],
+]
+
+[[group]]
+name = "tangent"
+type = "expression"
+key = "tan(x)"
+cases = [
+  ["sin(x)/cos(x)", "correct"],
+  ["1/cot(x)", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["sec(x)*sin(x)", "correct"],
+  ["cos(x)/sin(x)", "incorrect"],
+  ["sin(x)*cos(x)", "incorrect"],
+  ["tan(x + pi)", "correct"],
+]
+
+[[group]]
+name = "secant squared"
+type = "expression"
+key = "sec(x)^2"
+cases = [
+  ["1 + tan(x)^2", "correct"],
+  ["1/cos(x)^2", "correct"],
+  ["tan(x)^2", "incorrect"],
+  ["sec(x^2)", "incorrect"],
+]
+
+[[group]]
+name = "sine squared"
+type = "expression"
+key = "sin(x)^2"
+cases = [
+  ["(1 - cos(2x))/2", "correct"],
+  ["1 - cos(x)^2", "correct"],
+  ["sin(x^2)", "incorrect"],
+  ["sin(x)*sin(x)", "correct"],
+  ["sin^2(x)", "invalid"],
+  ["sin(x)²", "correct"],
+]
+
+[[group]]
+name = "derivative of cosine"
+type = "expression"
+key = "-sin(x)"
+cases = [
+  ["sin(-x)", "correct"],
+  ["cos(x + pi/2)", "correct"],
+  ["sin(x)", "incorrect"],
+  ["-cos(x)", "incorrect"],
+  ["-1*sin(x)", "correct"],
+]
+
+[[group]]
+name = "cosine shifts"
+type = "expression"
+key = "cos(x)"
+cases = [
+  ["sin(pi/2 - x)", "correct"],
+  ["sin(x + pi/2)", "correct"],
+  ["cos(-x)", "correct"],
+  ["cos(x + 2pi)", "correct"],
+  ["cos(x + pi)", "incorrect"],
+  ["sin(x)", "incorrect"],
+  ["cos(x + 6.2832)", "incorrect"],
+]
+
+[[group]]
+name = "arctangent"
+type = "expression"
+key = "arctan(x)"
+cases = [
+  ["arctan(x)", "correct"],
+  ["atan(x)", "correct"],
+  ["arcsin(x/sqrt(1+x^2))", "correct"],
+  ["1/tan(x)", "incorrect"],
+  ["tan(x)^-1", "incorrect"],
+  ["arccot(1/x)", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["tan^-1(x)", "invalid"],
+]
+
+[[group]]
+name = "arcsine"
+type = "expression"
+key = "arcsin(x)"
+cases = [
+  ["asin(x)", "correct"],
+  ["arccos(x)", "incorrect"],
+  ["pi/2 - arccos(x)", "correct"],
+  ["arctan(x/sqrt(1-x^2))", "incorrect"],  # review: false accept (hole: undefined where the key is defined) at +-1
+  ["sin(x)^-1", "incorrect"],
+]
+
+[[group]]
+name = "sign function"
+type = "expression"
+key = "sign(x)"
+cases = [
+  ["|x|/x", "incorrect"],  # review: false accept (hole: undefined where the key is defined): sign(0) = 0
+  ["x/|x|", "incorrect"],  # review: false accept (hole: undefined where the key is defined): sign(0) = 0
+  ["1", "incorrect"],
+]
+
+[[group]]
+name = "absolute value shift"
+type = "expression"
+key = "|x - 1|"
+cases = [
+  ["sqrt((x-1)^2)", "correct"],
+  ["|1-x|", "correct"],
+  ["x-1", "incorrect"],
+  ["1-x", "incorrect"],
+  ["|x| - 1", "incorrect"],
+  ["|x|-|1|", "incorrect"],
+]
+
+[[group]]
+name = "piecewise-looking ramp"
+type = "expression"
+key = "(|x| + x)/2"
+cases = [
+  ["(x + |x|)/2", "correct"],
+  ["x", "incorrect"],
+  ["|x|", "incorrect"],
+  ["(|x| - x)/2", "incorrect"],
+  ["x*(sign(x)+1)/2", "correct"],
+]
+
+[[group]]
+name = "tiny coefficient"
+type = "expression"
+key = "x/1000000"
+cases = [
+  ["0.000001x", "correct"],
+  ["x*10^(-6)", "correct"],
+  ["x/100000", "incorrect"],
+  ["0", "incorrect"],
+  ["10^-6*x", "correct"],
+]
+
+[[group]]
+name = "small linear term"
+type = "expression"
+key = "x^2 + 10^(-8)*x"
+cases = [
+  ["x^2", "incorrect"],
+  ["x(x + 10^(-8))", "correct"],
+  ["x^2 + 0.00000001x", "correct"],
+  ["x^2 + 0.0000001x", "incorrect"],
+]
+
+[[group]]
+name = "large coefficient"
+type = "expression"
+key = "1000000x^2 + 1"
+cases = [
+  ["10^6x^2 + 1", "correct"],
+  ["1000001x^2 + 1", "incorrect"],
+  ["999999x^2 + 1", "incorrect"],
+  ["(1000x)^2 + 1", "correct"],
+]
+
+[[group]]
+name = "tenth power"
+type = "expression"
+key = "(x+1)^10"
+cases = [
+  ["(1+x)^10", "correct"],
+  ["(x+1)^9*(x+1)", "correct"],
+  ["(x+1)^11", "incorrect"],
+  ["x^10 + 10x^9 + 45x^8 + 120x^7 + 210x^6 + 252x^5 + 210x^4 + 120x^3 + 45x^2 + 10x + 1", "correct"],
+  ["x^10 + 10x^9 + 45x^8 + 120x^7 + 210x^6 + 252x^5 + 210x^4 + 120x^3 + 46x^2 + 10x + 1", "incorrect"],
+  ["((x+1)^5)^2", "correct"],
+]
+
+[[group]]
+name = "near-miss constant term"
+type = "expression"
+key = "x^3 - 3x^2 + 3x - 1"
+cases = [
+  ["(x-1)^3", "correct"],
+  ["(x-1)^3 + 10^(-20)", "incorrect"],
+  ["(x-1)^3 + 10^(-40)", "incorrect"],
+  ["(x+1)^3", "incorrect"],
+]
+
+[[group]]
+name = "near-miss coefficient"
+type = "expression"
+key = "2x"
+cases = [
+  ["2.0000001x", "incorrect"],
+  ["1.99999x", "incorrect"],
+  ["2x + 0*x^2", "correct"],
+  ["2.0x", "correct"],
+  ["(2 + 10^(-35))x", "incorrect"],
+]
+
+[[group]]
+name = "huge values at the sample points"
+type = "expression"
+key = "e^(x^2)"
+cases = [
+  ["e^(x^2)", "correct"],
+  ["e^(x*x)", "correct"],
+  ["(e^x)^x", "correct"],
+  ["e^(x^2) + 1", "incorrect"],
+  ["e^(x^2+1)", "incorrect"],
+]
+
+[[group]]
+name = "power tower"
+type = "expression"
+key = "x^(x^2)"
+opts = { domain = "x > 0" }
+cases = [
+  ["x^(x^2)", "correct"],
+  ["e^(x^2*ln(x))", "correct"],
+  ["(x^x)^x", "correct"],
+  ["x^(2x)", "incorrect"],
+]
+
+[[group]]
+name = "huge exponents are refused"
+type = "expression"
+key = "x^2"
+cases = [
+  ["x^(10^10)", "invalid"],
+  ["x^1001", "invalid"],
+  ["x^1000/x^998", "invalid"],  # M7: hole-only, not wrong (ADR-0019 item 10); was incorrect
+  ["2^2^2^2^2^2^2^2^2^2^2^2^2^2", "invalid"],
+]
+
+[[group]]
+name = "domain with a root"
+type = "expression"
+key = "sqrt(x-1)"
+opts = { domain = "x >= 1" }
+cases = [
+  ["(x-1)^(1/2)", "correct"],
+  ["sqrt(x) - 1", "incorrect"],
+  ["sqrt(1-x)", "incorrect"],
+]
+
+[[group]]
+name = "domain excluding zero"
+type = "expression"
+key = "1/x"
+opts = { domain = "x != 0" }
+cases = [
+  ["x^-1", "correct"],
+  ["1/|x|", "incorrect"],
+  ["x/x^2", "correct"],
+]
+
+[[group]]
+name = "two-variable domain"
+type = "expression"
+key = "sqrt(x*y)"
+opts = { vars = ["x", "y"], domain = "x > 0, y > 0" }
+cases = [
+  ["sqrt(x)*sqrt(y)", "correct"],
+  ["sqrt(x)+sqrt(y)", "incorrect"],
+  ["(x*y)^(1/2)", "correct"],
+]
+
+[[group]]
+name = "product rule for logs"
+type = "expression"
+key = "ln(x*y)"
+opts = { vars = ["x", "y"], domain = "x > 0 and y > 0" }
+cases = [
+  ["ln(x) + ln(y)", "correct"],
+  ["ln(x)*ln(y)", "incorrect"],
+  ["ln(y) + ln(x)", "correct"],
+]
+
+[[group]]
+name = "relation between variables in the domain"
+type = "expression"
+key = "sqrt(x - y)"
+opts = { vars = ["x", "y"], domain = "x > y" }
+cases = [
+  ["(x-y)^(1/2)", "correct"],
+  ["sqrt(y - x)", "incorrect"],
+]
+
+[[group]]
+name = "positive variable assumption"
+type = "expression"
+key = "sqrt(t^2)"
+opts = { vars = ["t positive"] }
+cases = [
+  ["t", "correct"],
+  ["-t", "incorrect"],
+  ["|t|", "correct"],
+]
+
+[[group]]
+name = "integer variable"
+type = "expression"
+key = "(-1)^n"
+opts = { vars = ["n integer"] }
+cases = [
+  ["cos(pi*n)", "correct"],
+  ["(-1)^(n+2)", "correct"],
+  ["(-1)^(n+1)", "incorrect"],
+  ["1", "incorrect"],
+]
+
+[[group]]
+name = "degrees mode expressions"
+type = "expression"
+key = "sin(x)"
+opts = { angles = "degrees" }
+cases = [
+  ["cos(90 - x)", "correct"],
+  ["sin(x)", "correct"],
+  ["cos(x - 90)", "correct"],
+  ["sin(x + 360)", "correct"],
+  ["sin(x + 2pi)", "incorrect"],
+  ["sin(180 - x)", "correct"],
+]
+
+[[group]]
+name = "key undefined everywhere on its domain"
+type = "expression"
+key = "sqrt(x)"
+opts = { domain = "x < 0" }
+cases = [
+  ["sqrt(x)", "correct"],
+  ["sqrt(x) + 1", "undecidable"],
+]
+
+[[group]]
+name = "syntax errors never count"
+type = "expression"
+key = "x^2 + 1"
+cases = [
+  ["x^^2", "invalid"],
+  ["x^2 +* 1", "invalid"],
+  ["2x)", "invalid"],
+  ["((x)", "invalid"],
+  ["x^2+1)", "invalid"],
+  ["x|", "invalid"],
+  ["x,,", "invalid"],
+  ["@x", "invalid"],
+  ["x^2 + 1 =", "invalid"],
+  ["$x$", "invalid"],
+  ["x^2 + 1 % 2", "invalid"],
+  ["x^(2", "invalid"],
+  ["sin()", "invalid"],
+  ["sqrt()", "invalid"],
+  ["x^2 1", "invalid"],
+  ["x^2+1;x", "invalid"],
+  ["none", "invalid"],
+  ["DNE", "invalid"],
+  ["x < 1", "invalid"],
+  ["<x, 1>", "invalid"],
+  ["[[x]]", "invalid"],
+  ["{x}", "invalid"],
+  ["inf", "invalid"],
+  ["x^2 + inf", "invalid"],
+  ["x^2 + 1 + ---x", "invalid"],
+  ["f(x)", "invalid"],
+  ["x^2 + 1!", "invalid"],
+  ["x'", "invalid"],
+  ["x^2 + 01", "invalid"],
+  ["3 1/2", "invalid"],
+]
+
+[[group]]
+name = "two-piece domain"
+type = "expression"
+key = "sqrt(x^2 - 4)"
+cases = [
+  ["sqrt(x-2)*sqrt(x+2)", "incorrect"],
+  ["sqrt((x-2)(x+2))", "correct"],
+  ["|x|*sqrt(1 - 4/x^2)", "correct"],
+  ["x*sqrt(1 - 4/x^2)", "incorrect"],
+]
+
+[[group]]
+name = "two-piece log domain"
+type = "expression"
+key = "ln(x^2 - 1)"
+cases = [
+  ["ln(x-1) + ln(x+1)", "incorrect"],
+  ["ln|x-1| + ln|x+1|", "correct"],
+  ["ln|x^2 - 1|", "correct"],
+]
+
+[[group]]
+name = "answer defined more widely than the key"
+type = "expression"
+key = "sqrt(x-2)*sqrt(x+2)"
+cases = [
+  ["sqrt(x^2-4)", "correct"],
+  ["sqrt(x^2+4)", "incorrect"],
+]
+
+[[group]]
+name = "many pieces"
+type = "expression"
+key = "sqrt(sin(x))"
+cases = [
+  ["sin(x)^(1/2)", "correct"],
+  ["sqrt(|sin(x)|)", "correct"],
+  ["sqrt(sin(|x|))", "incorrect"],
+]

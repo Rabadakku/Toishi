@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Starts scripts/mac-runner.sh whenever a request file appears in .runner/requests, so the
+  build agents can run the Mac checks. Install with scripts/install-runner.sh, which fills in
+  the placeholders (launchd does not expand ~ or $HOME). Runs in the logged-in user's session,
+  because the checks open the app's window.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.toishi.runner</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/mac-runner.sh</string>
+  </array>
+  <key>WatchPaths</key>
+  <array>
+    <string>__REPO__/.runner/requests</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>ProcessType</key>
+  <string>Standard</string>
+  <key>StandardOutPath</key>
+  <string>__REPO__/logs/runner.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/logs/runner.log</string>
+</dict>
+</plist>

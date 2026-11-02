@@ -1,0 +1,138 @@
+/*
+ * Design tokens: the palette from docs/spec.md "Design and theme", plus a few derived
+ * tokens (on-accent, accent-strong, surface-sunken, scrim, shadow).
+ *
+ * Three ways to pick a theme, all driven from here:
+ *   Day        <html data-theme="day">     (also what :root is by default)
+ *   Night      <html data-theme="night">
+ *   Automatic  no data-theme attribute: follows prefers-color-scheme
+ *
+ * The Night block appears twice (explicit, and inside the media query). That is
+ * deliberate and enforced by tests/ui/test_theme_contrast.py, which also checks every
+ * text/background pair against WCAG AA (4.5:1) in both themes.
+ * No pure white and no pure black anywhere in the palette.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Palette: Day */
+  --background: #f6f4ef;
+  --surface: #fcfbf8;
+  --border: #e2ded5;
+  --text: #1e2226;
+  --text-muted: #5c6269;
+  --accent: #2f6db0;
+  --correct: #2b7a6f;
+  --incorrect: #b4531b;
+  --warning: #936611;
+  --selection: #dce8f6;
+
+  /* Derived, Day */
+  --on-accent: #fcfbf8;
+  --accent-strong: #265a93;
+  --surface-sunken: #efece4;
+  --scrim: rgb(246 244 239 / 0.6);
+  --shadow: 0 1px 2px rgb(30 34 38 / 0.06), 0 4px 16px rgb(30 34 38 / 0.06);
+  --image-filter: none;
+}
+
+:root[data-theme='night'] {
+  color-scheme: dark;
+
+  --background: #17191c;
+  --surface: #1f2226;
+  --border: #30343a;
+  --text: #e4e1da;
+  --text-muted: #a2a6ad;
+  --accent: #7fa8db;
+  --correct: #5db5a8;
+  --incorrect: #e08a52;
+  --warning: #d4a64a;
+  --selection: #2a3b52;
+
+  --on-accent: #17191c;
+  --accent-strong: #94b8e3;
+  --surface-sunken: #14161a;
+  --scrim: rgb(23 25 28 / 0.6);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 4px 16px rgb(0 0 0 / 0.2);
+  --image-filter: brightness(0.88);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --background: #17191c;
+    --surface: #1f2226;
+    --border: #30343a;
+    --text: #e4e1da;
+    --text-muted: #a2a6ad;
+    --accent: #7fa8db;
+    --correct: #5db5a8;
+    --incorrect: #e08a52;
+    --warning: #d4a64a;
+    --selection: #2a3b52;
+
+    --on-accent: #17191c;
+    --accent-strong: #94b8e3;
+    --surface-sunken: #14161a;
+    --scrim: rgb(23 25 28 / 0.6);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.25), 0 4px 16px rgb(0 0 0 / 0.2);
+    --image-filter: brightness(0.88);
+  }
+}
+
+/* macOS "Increase Contrast": stronger borders and thicker focus rings. */
+@media (prefers-contrast: more) {
+  :root {
+    --border: var(--text-muted);
+    --focus-width: 3px;
+  }
+}
+
+:root {
+  /* Type. Problem text is 18 px / 1.6 at the default text size; the interface uses Inter. */
+  --font-ui: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --font-text: 'Source Serif 4 Variable', 'Iowan Old Style', Georgia, serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /*
+   * Text size: the Settings slider sets --text-size (14 to 28, default 18) on <html>. It is
+   * the size of problem text in px; the root font size follows (16 px at 18), so every rem
+   * in the interface and every em in the math scales with it.
+   */
+  --text-size: 18;
+  --rem: calc(var(--text-size) / 18 * 16px);
+
+  --fs-caption: 0.75rem;
+  --fs-small: 0.875rem;
+  --fs-body: 1rem;
+  --fs-problem: 1.125rem; /* 18 px at the default size */
+  --fs-answer: 1.375rem;
+  --fs-title: 1.5rem;
+  --fs-display: 2rem;
+  --lh-ui: 1.5;
+  --lh-problem: 1.6;
+  --math-scale: 1.05; /* math is 1.05 times the surrounding text */
+  --measure: 38rem; /* the problem column: about 70 characters of problem text */
+
+  /* Spacing: an 8 px grid (4 px for tight gaps). */
+  --sp-0: 4px;
+  --sp-1: 8px;
+  --sp-2: 16px;
+  --sp-3: 24px;
+  --sp-4: 32px;
+  --sp-5: 40px;
+  --sp-6: 48px;
+  --sp-8: 64px;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+
+  /* Motion: fades of 150 ms or less; reduce-motion sets this to 0 (see base.css). */
+  --dur: 120ms;
+
+  --focus-width: 2px;
+  --sidebar-width: 224px;
+}

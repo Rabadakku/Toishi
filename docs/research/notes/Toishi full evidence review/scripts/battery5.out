@@ -1,0 +1,17 @@
+U1 key 1 | 1+10^(-300)                          -> incorrect     404 ms  
+U2 key 2 | sqrt(2)*sqrt(2)+10^(-200)            -> incorrect       4 ms  
+U3 key 2^1000 | 2^1000+1                        -> incorrect       1 ms  
+U4 key 0 | exp(-1000)                           -> incorrect       2 ms  
+U5 key x | x+exp(-1000*x^2)                     -> incorrect     101 ms  
+U6 key 0 | sin(pi)                              -> correct         1 ms  
+U7 key 1 | cos(1)^2+sin(1)^2                    -> correct        31 ms  
+U8 key 5 | ln(exp(5))                           -> correct         2 ms  
+U9 key sqrt(x*y) | sqrt(x)*sqrt(y)              -> incorrect      12 ms  Your answer is undefined at x = -5.50495, y = -4.49583, where the correc
+U10 key sqrt(x)*sqrt(y) | sqrt(x*y)             -> correct        34 ms  
+U11 key -2 | (-8)^(1/3)                         -> correct         2 ms  
+U12 key root(-8,3) | -2                         -> correct         1 ms  
+U13 key 2*sin(x)*cos(x) | sin(2*x)              -> correct        26 ms  
+U14 key (1-cos(2*x))/2 | sin(x)^2               -> correct        43 ms  
+U15 key arctan(x)+arctan(1/x) domain x>0 | pi/2 -> correct        44 ms  
+U16 key x^x | exp(x*ln(x))                      -> incorrect       9 ms  Your answer is undefined at x = -3.0, where the correct answer is define
+U17 key x^x domain x>0 | exp(x*ln(x))           -> correct        35 ms  
