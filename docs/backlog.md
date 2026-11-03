@@ -302,3 +302,25 @@ From `docs/design/external-audit-response.md`; the design text is in `student-mo
 - **The sitting clock never pauses** (2.4): sent to the wave 2 session build (W1) on 2026-11-02; check it when W1 merges.
 - **Simulator truth models (g) and (h)** (6.2): step-abandonment learners and distracted timers with bursty pauses.
 - **A background skill served as practice gets the course learning law** (with the precalculus review item above; external audit 4.1). A weak background skill that the review serves is otherwise tracked only by evidence.
+
+## Paused work (2026-11-02, stopped for the usage limit)
+Unfinished agent work is on branches built on the current history (each checked for personal details before pushing). Resume or merge from these:
+- **`wip/wave2-core`** (W1): user.db v3, core/practice, and the session switch, mid-phase 3. Still to do:
+  - finish phase 3 and the bridge;
+  - in sittings the clock never pauses, and a pause over 2 minutes voids the sitting (design v1.5, 2.4);
+  - pass each served WorkItem back exactly as returned (day_items, ladder_for, sitting, sitting_block).
+- **`wip/wave2-pages`** (W2): Today, Study without help, Course setup, Skills, Model. Merge after W1.
+- **`wip/calc1-4-1`**: section 4.1 and its independent review (`docs/design/calc1-4-1-review.md`), fixes not started. Rulings:
+  - instant-curve.t03 must separate the wrong method from the key by at least 5% (no `exact: yes` patch);
+  - the 25 one-step tier 3-4 cards go to tiers 1-2, with whole exam problems added at tiers 3-4 for each of the five skills;
+  - the textbook-like set-ups get new scenarios and original numbers.
+- **`wip/calc1-0-6`**: the geometry deck and its review (`docs/design/calc1-0-6-review.md`), fixes not started. Rulings:
+  - retarget the three umbrella users and rename pythagorean;
+  - add a background rate component (distance = rate × time) with drills;
+  - add problems for the five unpaired flashcard facts;
+  - re-tier as the review says, and plane composites must not require solids.
+- **`wip/calc1-4-5`**: section 4.5, written and checked by its writer; the independent review has not run.
+- **`wip/calc1-4-7`**: section 4.7, unfinished.
+- Section 4.8 was not saved; start it again.
+- The review document for the professor: a revised draft from the audit and fact-check is not yet applied to the doc, and its own fact-check didn't finish.
+- sim2: the truth "ready at pace" still uses the per-problem product rule (W3's note 6). Move it to the v1.5 pace definition before the gate rerun, since gate 4's false certifications depend on it.
