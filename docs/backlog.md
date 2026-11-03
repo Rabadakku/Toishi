@@ -324,3 +324,6 @@ Unfinished agent work is on branches built on the current history (each checked 
 - Section 4.8 was not saved; start it again.
 - The review document for the professor: a revised draft from the audit and fact-check is not yet applied to the doc, and its own fact-check didn't finish.
 - sim2: the truth "ready at pace" still uses the per-problem product rule (W3's note 6). Move it to the v1.5 pace definition before the gate rerun, since gate 4's false certifications depend on it.
+
+## Study mindset (owner, 2026-11-02 20:57)
+A gaokao study mindset for everyone who uses the app: "if you don't suffer now you'll suffer later", material against super stimuli, and a reading list for hardcore students. The design proposal is in `docs/design/study-mindset.md`: principles from the evidence, a first-run future-self exercise and if-then plans, a Read section of short cited essays, the reading list, focus sessions, a how-learning-works deck, and a help page. Build after the wave 2 merge; verify every claim and helpline first.
