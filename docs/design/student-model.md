@@ -268,7 +268,7 @@ For skill s and tier ℓ, keep a Beta posterior over s's first-try success at ti
   - That matches the common 3–5-in-a-row mastery rules. The check is the operating rate: the 6.2 gate compares false certification with the baseline. **C**.
 
 **M1 and Keep are certified** when the posterior mean ≥ the accuracy target and the effective direct observations reach 3.
-- *Basis:* mastery criteria based on 3–5 correct answers differ little in retention. In the ALEKS randomized threshold trial, 5 vs 3 correct answers in a row changed retention by about 0.02 (most differences under 0.02), for 6.6 instead of 5.1 minutes per topic (Matayoshi et al. 2025, **A**). N-consecutive-correct and EMA thresholds perform close to model-based ones (Pelánek & Řihák 2017, **B**).
+- *Basis:* mastery criteria based on 3–5 correct answers differ little in retention. In the ALEKS randomized threshold trial, the thresholds were scores equivalent to about 2 and 3 correct answers in a row. The higher one changed retention by about 0.02 (mean 0.021; most differences under 0.02), for 6.6 instead of 5.1 minutes per topic (Matayoshi et al. 2025, **A**). N-consecutive-correct and EMA thresholds perform close to model-based ones (Pelánek & Řihák 2017, **B**).
 
 **Certification changes only on days with new evidence (v1.5).** A key is certified or revoked only after a day's first tries at that key are added. Between those days the posterior relaxes toward the forecast and drives maintenance (4.3), but it changes no certification.
 - *Basis:* after gaps over 30 days, the model under-predicts success by 4–6 points even after recalibration (Statics, XES3G5M). A forecast-driven revocation would therefore mostly revoke students who are fine (external audit 2.5). **B**.
