@@ -279,16 +279,6 @@ def learning_state(skill: str, now: int, *, streak: int = 1, count: int = 2) -> 
 # ---------------------------------------------------------------- a scripted planner
 
 
-@dataclass(frozen=True, slots=True)
-class Work(WorkItem):
-    """A planner item with the wave 2 planner's fields (ladder, sitting, time_limit), whether or
-    not the core.plan under test has them yet."""
-
-    ladder: int = 0
-    sitting: str | None = None
-    time_limit: float | None = None
-
-
 def _key(item: WorkItem) -> str:
     return item.problem.problem_id if item.problem is not None else str(item.example_card)
 
@@ -313,7 +303,7 @@ class Script:
         """Plan `card_id` (or a part, "card#a") next."""
         catalog = self.svc.practice.catalog()
         spec = catalog.problems.get(card_id) or catalog.by_card[card_id][0]
-        item = Work(
+        item = WorkItem(
             skill_id=kw.pop("skill_id", spec.main_skill),
             role=role,  # type: ignore[arg-type]
             problem=spec,
@@ -329,7 +319,7 @@ class Script:
         return item
 
     def example(self, skill: str, card_id: str | None = None) -> WorkItem:
-        item = Work(
+        item = WorkItem(
             skill_id=skill,
             role="new",
             problem=None,

@@ -15,6 +15,7 @@ import pytest
 
 from core.engine import TimingFacts
 from core.model import CourseSetup, Exam
+from core.plan.certify import sitting_outcome
 from core.practice import PracticeEngine
 from core.queue import Plan, QueueError, StudyService, to_dict
 from core.queue.session import valid_minutes
@@ -125,6 +126,27 @@ def test_a_daily_session_serves_the_planners_new_skill_blocks(world: World) -> N
     assert world.storage.users.skill_states() == {}  # ... or state rows: the log is the state
     replayed(world, svc)
     assert [o.attempt_id for o in svc.practice.observations()] == [first.id]
+
+
+def test_each_served_item_goes_back_to_the_planner_exactly_as_it_returned_it(
+    world: World,
+) -> None:
+    """The planner is stateless: the day's cap (`day_items`), the ladder's `ladder_for` and a
+    sitting's block ride on the served items, so each must come back from the log whole."""
+    svc = world.service()
+    day = svc.practice.days().day_of(world.clock.now_ms())
+    first_plan = svc.practice.plan_day(day, world.clock.now_ms())
+    assert first_plan.items[0].item.day_items is not None  # the first plan stamps its size
+    svc.start()
+    svc.next()  # the worked example
+    answer(svc, world.clock, correct=False)
+    svc.give_up(TIMING)
+    svc.next()
+    served = [s.item for _, s in svc.practice.served(day)]
+    assert served == [p.item for p in first_plan.items[:2]]
+    world.reopen()  # and after a restart, rebuilt from the log alone
+    again = PracticeEngine(world.storage).served(day)
+    assert [s.item for _, s in again] == served
 
 
 # ---------------------------------------------------------------- trying again
@@ -248,48 +270,142 @@ def test_too_easy_is_logged_with_a_correct_answer(world: World) -> None:
     assert finals(world)[0].too_easy
 
 
-def test_a_sitting_is_closed_book_with_its_skill_blocks_limit(world: World) -> None:
+def sitting_script(world: World) -> tuple[StudyService, Script, float]:
+    """A sitting of three problems: two of ca.s1.k1 (its block) and one of ca.s1.k2. Returns
+    the k1 block's limit in minutes (the sum of its problems' T*, the planner's time_limit)."""
     svc = world.service()
     script = Script(svc)
-    sit: dict[str, Any] = {"sitting": "sit-1", "milestone": "M2", "time_limit": 3.5}
-    a = script.problem("ca.s1.k1.t3.v0", "sitting", **sit)
-    b = script.problem("ca.s1.k1.t3.v1", "sitting", **sit)
-    script.problem("ca.s1.k2.t3.v0", "sitting", **sit)
-    assert a.problem is not None
-    assert b.problem is not None
-    limit = a.problem.standard_minutes + b.problem.standard_minutes
+    catalog = svc.practice.catalog()
+    k1 = ["ca.s1.k1.t3.v0", "ca.s1.k1.t3.v1"]
+    k1_limit = sum(catalog.problems[c].standard_minutes for c in k1)
+    k2_limit = catalog.problems["ca.s1.k2.t3.v0"].standard_minutes
+    sit: dict[str, Any] = {"sitting": "sitting:ca:2026-09-01", "milestone": "M2"}
+    for card in k1:
+        script.problem(card, "sitting", time_limit=k1_limit, **sit)
+    script.problem("ca.s1.k2.t3.v0", "sitting", time_limit=k2_limit, **sit)
+    return svc, script, k1_limit
+
+
+def sitting_answer(svc: StudyService, world: World, seconds: int, **timing: Any) -> Any:
+    """Answer the sitting problem on screen right after `seconds` of wall clock."""
+    world.clock.advance(seconds=seconds)
+    report = {"active_ms": seconds * 1000, "solve_ms": seconds * 800, "entry_ms": 2_000}
+    return svc.submit({"answers": [{"value": "1"}], "timing": report | timing})
+
+
+def test_a_sitting_is_closed_book_with_its_skill_blocks_limit(world: World) -> None:
+    svc, _, k1_limit = sitting_script(world)
     turn = svc.start()
     assert turn.problem is not None
     sitting = turn.problem.sitting
     assert sitting is not None
-    assert (sitting.id, sitting.index, sitting.total) == ("sit-1", 1, 3)
-    assert sitting.time_limit_ms == round(limit * 60_000)  # the k1 block: its two problems
+    assert (sitting.id, sitting.index, sitting.total) == ("sitting:ca:2026-09-01", 1, 3)
+    assert sitting.time_limit_ms == round(k1_limit * 60_000)  # the k1 block: its two problems
     assert sitting.block_elapsed_ms == 0
     assert turn.problem.textbook is None  # closed book
     assert turn.problem.reason.tag == "exam-prep"
     with pytest.raises(QueueError, match="closed book"):
         svc.open_example()
-    submit(svc, "1")
+    sitting_answer(svc, world, 40)
     turn = svc.next()
+    (first,) = finals(world)
+    assert (first.role, first.sitting, first.milestone) == (
+        "sitting",
+        "sitting:ca:2026-09-01",
+        "M2",
+    )
+    assert first.extra["plan"]["time_limit"] == k1_limit
+    assert first.valid_minutes is not None
     assert turn.problem is not None
     second = turn.problem.sitting
     assert second is not None
     assert (second.index, second.time_limit_ms) == (2, sitting.time_limit_ms)
-    assert second.block_elapsed_ms == 40_000  # the block's first problem took 40 s
+    # The block's earlier problem: its counted sitting time (wall clock plus the typing
+    # allowance); the page adds the running time of the problem on screen.
+    assert second.block_elapsed_ms == round(first.valid_minutes * 60_000)
+    assert second.block_elapsed_ms > 40_000
     world.clock.advance(seconds=15)
     svc.tick(15_000)
-    third = svc.current().problem
-    assert third is not None
-    assert third.sitting is not None
-    assert third.sitting.block_elapsed_ms == 55_000
-    submit(svc, "1")
+    again = svc.current().problem
+    assert again is not None
+    assert again.sitting is not None
+    assert again.sitting.block_elapsed_ms == second.block_elapsed_ms
+    sitting_answer(svc, world, 30)
     turn = svc.next()
     assert turn.problem is not None
     assert turn.problem.sitting is not None
     assert turn.problem.sitting.block_elapsed_ms == 0  # another skill's block
-    row = finals(world)[0]
-    assert (row.role, row.sitting, row.milestone) == ("sitting", "sit-1", "M2")
-    assert row.extra["plan"]["time_limit"] == 3.5
+
+
+# ---------------------------------------------------------------- the sitting clock
+
+
+def test_a_sittings_clock_never_stops_so_a_defocus_counts(world: World) -> None:
+    """Coordinator rule: in a sitting the wall clock from the problem shown to the submit
+    counts, pauses and defocus included; practice keeps TIME-4's solve time."""
+    svc, script = scripted(world, "ca.s1.k3.t3.v0")  # a practice problem first
+    sit = {"sitting": "sitting:ca:2026-09-01", "milestone": "M2", "time_limit": 3.5}
+    script.problem("ca.s1.k1.t3.v0", "sitting", **sit)
+    report = {"paused_ms": 90_000, "pause_count": 1, "longest_pause_ms": 90_000}
+    svc.start()
+    sitting_answer(svc, world, 150, **report)  # 150 s on the clock, 90 s of it away
+    svc.next()
+    sitting_answer(svc, world, 150, **report)
+    svc.next()
+    practice, sat = finals(world)
+    assert (practice.role, sat.role) == ("growth", "sitting")
+    allowance = 5_000 + 300 * 1  # TIME-4: 5 s and 0.3 s per character of "1"
+    assert practice.valid_minutes == pytest.approx((120_000 + allowance) / 60_000)  # solve time
+    assert sat.valid_minutes == pytest.approx((150_000 + allowance) / 60_000)  # the wall clock
+    (obs,) = [o for o in svc.practice.observations() if o.role == "sitting"]
+    assert obs.minutes == sat.valid_minutes
+
+
+def test_a_sitting_with_a_long_pause_has_no_time_and_is_void(world: World) -> None:
+    svc, _, _ = sitting_script(world)
+    svc.start()
+    sitting_answer(svc, world, 60)
+    svc.next()
+    sitting_answer(svc, world, 240, paused_ms=180_000, pause_count=1, longest_pause_ms=180_000)
+    svc.next()
+    first, second = finals(world)
+    assert first.valid_minutes is not None
+    assert second.valid_minutes is None  # a pause over 2 minutes: the time is unknown
+    observed = [o for o in svc.practice.observations() if o.role == "sitting"]
+    assert [o.minutes is None for o in observed] == [False, True]
+    assert all(o.correct and not o.aided for o in observed)
+    assert sitting_outcome(observed) == "void"  # neither a pass nor a fail: no 2-day wait
+
+
+def test_the_first_answer_after_a_wake_has_no_sitting_time(world: World) -> None:
+    svc, _, _ = sitting_script(world)
+    svc.start()
+    sitting_answer(svc, world, 60, after_wake=True)
+    svc.next()
+    assert finals(world)[0].valid_minutes is None
+
+
+def test_a_sitting_problem_open_when_the_app_closed_has_no_time(world: World) -> None:
+    svc, script, _ = sitting_script(world)
+    svc.start()
+    world.clock.advance(seconds=20)
+    world.reopen()  # quit (or a crash) with the problem on screen
+    svc2 = world.service()
+    Script(svc2).items = list(script.items)
+    turn = svc2.resume()
+    assert turn is not None
+    assert turn.problem is not None
+    sitting_answer(svc2, world, 40)
+    svc2.next()
+    assert finals(world)[0].valid_minutes is None  # void, not failed on a clock nobody saw
+
+
+def test_an_untimed_session_gives_a_sitting_no_time(world: World) -> None:
+    svc, _, _ = sitting_script(world)
+    svc.start({"untimed": True})
+    sitting_answer(svc, world, 60)
+    svc.next()
+    assert finals(world)[0].valid_minutes is None  # TIME-6: nothing from it counts for pace
 
 
 def test_a_skill_set_aside_by_the_replan_says_so_with_its_textbook(world: World) -> None:
@@ -592,8 +708,13 @@ def test_a_practice_test_is_graded_at_the_end_and_unanswered_problems_are_no_evi
     observed = svc.practice.observations()
     assert len(observed) == 2  # the unanswered problem is not evidence (C5)
     assert {o.role for o in observed} == {"practice-test"}
-    # Not the day's plan: the planner's served items leave the test out.
-    assert svc.practice.served(svc.practice.days().day_of(world.clock.now_ms())) == []
+    # The planner gets the answered ones back as items outside its plan (they count toward a
+    # skill's streak, never toward the day's cap: planner-impl-notes.md).
+    served = svc.practice.served(svc.practice.days().day_of(world.clock.now_ms()))
+    assert [(s.item.role, s.correct) for _, s in served] == [
+        ("practice-test", True),
+        ("practice-test", False),
+    ]
 
 
 def test_an_unknown_mode_is_refused_without_closing_the_open_session(world: World) -> None:

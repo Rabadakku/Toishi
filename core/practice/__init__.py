@@ -33,7 +33,9 @@ from core.practice.engine import (
     params_from_json,
     params_json,
     plan_settings,
+    work_from_json,
     work_item,
+    work_json,
 )
 from core.practice.observations import build_observations, minutes_of, observations_of
 
@@ -61,5 +63,7 @@ __all__ = [
     "plan_settings",
     "problem_specs",
     "textbook_of",
+    "work_from_json",
     "work_item",
+    "work_json",
 ]

@@ -63,7 +63,8 @@ from core.model import (
     SessionState,
     VoidReason,
 )
-from core.practice import Catalog, PlannedItem, PracticeEngine, PracticePlan
+from core.plan.types import WorkItem
+from core.practice import Catalog, PlannedItem, PracticeEngine, PracticePlan, work_json
 from core.practice.words import plain_note, set_aside_line
 from core.queue import cloze
 from core.queue import views as v
@@ -323,9 +324,9 @@ class StudyService:
         notes: list[str] = []
         for day_plan in planned.plans.values():
             behind += [names(k) for k in day_plan.behind]
-            aside = [str(k) for k in getattr(day_plan, "set_aside", ())]
+            aside = [str(k) for k in day_plan.set_aside]
             aside_ids += aside
-            for sid, skills in tuple(getattr(day_plan, "sittings", ())):
+            for sid, skills in day_plan.sittings:
                 sittings.append({"id": str(sid), "skills": [names(k) for k in skills]})
             notes += [plain_note(note, catalog, set_aside=aside) for note in day_plan.notes]
         return {
@@ -408,7 +409,10 @@ class StudyService:
         items = []
         for p in self._extra_items(day, req.count or EXTRA_DEFAULT):
             plan, key = plan.next_key("ex")
-            item = _plan_item(key, p, catalog, version)
+            # Tomorrow's item, done today: without tomorrow's cap stamp, which would bind
+            # today's plan if a daily session followed (the planner takes the smallest stamp).
+            early = replace(p, item=replace(p.item, day_items=None))
+            item = _plan_item(key, early, catalog, version)
             items.append(replace(item, why=why("review.extra-plan")))
         return replace(plan, n=len(items), items=tuple(items), info={"engine": ENGINE})
 
@@ -421,15 +425,15 @@ class StudyService:
         rebuilt)."""
         users = self._storage.users
         session = users.latest_open_session()
+        first_look, self._resumed = not self._resumed, True
         if session is None:
             return None
         plan = Plan.from_json(session.plan)
         ours = plan.info.get("engine") == ENGINE
         if ours:
             session = self._recover(session)
-            if not self._resumed:
+            if first_look:  # a session from before this launch
                 session = self._interrupted(session, plan)
-        self._resumed = True
         if ours and session.study_day == self._today().isoformat():
             return session
         plan = Plan.from_json(session.plan)
@@ -1457,6 +1461,7 @@ class StudyService:
                 "minutes": meta.get("minutes"),
                 "tier": meta.get("tier"),
                 "time_limit": meta.get("time_limit"),
+                "work": meta.get("work"),
             }
         if pending.get("parts"):
             extra["parts"] = list(pending["parts"])
@@ -2107,6 +2112,18 @@ class StudyService:
         for course_id, problem in chosen:
             plan, key = plan.next_key("pt")
             tag, label, variant = ROLE_REASONS["practice-test"]
+            # The planner reads a practice test's first tries back (a skill's streak), as items
+            # outside its plan (by role), so each is logged as a planner item too.
+            work = WorkItem(
+                skill_id=problem.main_skill,
+                role="practice-test",
+                problem=problem,
+                example_card=None,
+                expected_minutes=problem.standard_minutes,
+                priority=1,
+                tier=problem.tier,
+                reason="practice-test",
+            )
             items.append(
                 PlanItem(
                     key=key,
@@ -2131,6 +2148,7 @@ class StudyService:
                         "priority": 1,
                         "reason": "practice-test",
                         "version": version,
+                        "work": work_json(work),
                     },
                 )
             )
@@ -2424,15 +2442,16 @@ def _plan_item(key: str, planned: PlannedItem, catalog: Catalog, version: str) -
             "milestone": it.milestone,
             "missed": it.missed,
             "p": it.p,
-            "ladder": int(getattr(it, "ladder", 0) or 0),
-            "sitting": getattr(it, "sitting", None),
-            "time_limit": getattr(it, "time_limit", None),
+            "ladder": it.ladder,
+            "sitting": it.sitting,
+            "time_limit": it.time_limit,
             "priority": it.priority,
             "reason": reason,
             "tier": it.tier,
             "block": it.block,
             "minutes": it.expected_minutes,
             "version": version,
+            "work": work_json(it),  # the item whole, given back to the planner once served
         },
     )
 

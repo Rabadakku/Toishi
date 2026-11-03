@@ -2,8 +2,9 @@
 
     python -m tests.storage.v2_user <user_v2.sql>
 
-user_v2.sql was written once by the schema v2 code (commit 18fd93b) through the real
-StudyService on the Test pack, so it holds a v2 history exactly as that code wrote it:
+user_v2.sql was written once by the schema v2 code (the commit before the v3 migration)
+through the real StudyService on the Test pack, so it holds a v2 history exactly as that code
+wrote it:
 
 - three study days of daily sessions: right and wrong first tries, a wrong try then a right
   one, give-ups, a hint before answering, worked examples, flashcards and cloze blanks, an

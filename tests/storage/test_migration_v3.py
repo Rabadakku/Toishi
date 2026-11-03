@@ -34,7 +34,9 @@ from tests.storage.v1_cards import load_fixture
 from tests.storage.v2_user import COURSE, COURSE_START, USER_V2
 
 ROOT = Path(__file__).resolve().parents[2]
-V2_LAST_COMMIT = "18fd93b"  # the last commit with schema v2 (wrote the v2 fixture)
+# The last commit with schema v2: the parent of the commit that added the v3 migration (found
+# from the history, so a rebase or a rewritten history does not lose it).
+V3_MIGRATION = "core/storage/sql/migrate_user_v3.sql"
 
 Rows = dict[str, list[dict[str, Any]]]
 
@@ -421,16 +423,25 @@ def v2_code(tmp_path: Path) -> Path:
     git = shutil.which("git")
     if git is None:
         pytest.skip("git is not installed")
+    added = subprocess.run(
+        [git, "-C", str(ROOT), "log", "--diff-filter=A", "--format=%H", "--", V3_MIGRATION],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    if not added:
+        pytest.skip("this clone has no history of the v3 migration")
+    last_v2 = f"{added[-1]}^"
     found = subprocess.run(
-        [git, "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"{V2_LAST_COMMIT}^{{commit}}"],
+        [git, "-C", str(ROOT), "rev-parse", "--verify", "--quiet", f"{last_v2}{{commit}}"],
         capture_output=True,
         check=False,
     )
     if found.returncode != 0:
-        pytest.skip(f"commit {V2_LAST_COMMIT} is not in this clone")
+        pytest.skip(f"commit {last_v2} is not in this clone")
     archive = tmp_path / "v2.tar"
     subprocess.run(
-        [git, "-C", str(ROOT), "archive", "-o", str(archive), V2_LAST_COMMIT, "core"],
+        [git, "-C", str(ROOT), "archive", "-o", str(archive), last_v2, "core"],
         check=True,
     )
     out = tmp_path / "v2-code"

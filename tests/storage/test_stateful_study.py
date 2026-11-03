@@ -10,7 +10,8 @@ stored flashcard memory equals a replay of the log, and so does the learner stat
 session keeps cached (C3); due dates are finite and never before the last review; an undo
 restores exactly the state before the answer.
 
-The fast profile runs in check.sh fast (well under 30 s); the long one is marked slow.
+The fast profile runs in check.sh fast (about a minute: the planner runs after every answer);
+the long one is marked slow.
 """
 
 import math

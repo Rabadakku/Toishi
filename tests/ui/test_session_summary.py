@@ -55,7 +55,8 @@ def api(tmp_path: Path) -> Iterator[Api]:
 def test_summary_says_more_is_ready_today_and_groups_misses_by_skill(
     api: Api, web_dist: Path, guarded: Guarded
 ) -> None:
-    # Every learning problem missed through the bridge, the last one left on screen.
+    # Every learning problem missed through the bridge (a wrong first try, then a give-up:
+    # retries are unlimited since wave 2), the last one left on screen.
     turn = api.study_start({"mode": "daily"})
     timing = {"active_ms": 30_000, "solve_ms": 25_000, "entry_ms": 2_000}
     while True:
@@ -64,13 +65,13 @@ def test_summary_says_more_is_ready_today_and_groups_misses_by_skill(
         if problem["kind"] == "example":
             turn = api.study_next({"item_key": key})
             continue
-        result = {"outcome": "retry"}
-        while result["outcome"] == "retry":
-            answers = [{"part": None, "value": "0", "source": "text"}]
-            result = api.study_submit({"item_key": key, "answers": answers, "timing": timing})
+        answers = [{"part": None, "value": "0", "source": "text"}]
+        result = api.study_submit({"item_key": key, "answers": answers, "timing": timing})
+        if result["outcome"] == "retry":
+            result = api.study_give_up({"item_key": key, "timing": timing})
+        assert result["outcome"] == "incorrect"
         if turn["progress"]["position"] == turn["progress"]["total"]:
-            break  # the last miss is diagnosed on the page
-        api.study_diagnose({"item_key": key, "choice": "cant-tell"})
+            break  # the last miss stays on the page's verdict screen
         turn = api.study_next({"item_key": key})
     assert turn["progress"]["position"] >= 2
 
@@ -82,7 +83,7 @@ def test_summary_says_more_is_ready_today_and_groups_misses_by_skill(
         expect(page.get_by_test_id("start")).to_be_focused()
         page.keyboard.press("Enter")  # resumes on the last verdict
         expect(page.get_by_test_id("verdict")).to_be_visible()
-        page.get_by_role("button", name="Can't tell").click()
+        expect(page.get_by_test_id("continue")).to_be_enabled()  # no picker to answer first
         page.get_by_test_id("continue").click()
         expect(page.get_by_test_id("summary")).to_be_visible()
         # One line for the skill, however many of its problems were missed (the Mac

@@ -58,7 +58,6 @@ from core.storage import Storage, StorageError
 DAY_MS = 86_400_000
 MS_PER_MINUTE = 60_000.0
 PRIOR_VERSION = SharedParams().version  # "prior"
-OFF_PLAN_ROLES = frozenset({"practice-test"})  # logged with a plan, never a served item
 GROWTH_BANDS: Mapping[str, tuple[float, float]] = {
     "standard": (0.70, 0.90),  # design 4.4
     "hard": (0.50, 0.75),  # wave2-planner.md 3: the owner's harder band
@@ -162,10 +161,42 @@ class RefitOutcome:
 
 
 def work_item(**values: Any) -> WorkItem:
-    """A WorkItem from stored values, keeping only the fields this core.plan has (the
-    planner's wave 2 adds ladder, sitting and time_limit; either merge order works)."""
+    """A WorkItem from stored values, keeping only the fields this core.plan has (rows from
+    before the planner's item was logged whole, see `work_json`)."""
     known = {f.name for f in fields(WorkItem)}
     return WorkItem(**{k: v for k, v in values.items() if k in known})
+
+
+def work_json(item: WorkItem) -> dict[str, Any]:
+    """A planner item as JSON, every field, the problem by its id: the session logs it with
+    the attempt, so the planner gets each served item back exactly as it returned it (its
+    `day_items` cap, `ladder_for` and sitting fields ride on them; planner-impl-notes.md)."""
+    out: dict[str, Any] = {}
+    for f in fields(WorkItem):
+        value = getattr(item, f.name)
+        if f.name == "problem":
+            value = None if value is None else value.problem_id
+        elif isinstance(value, tuple):
+            value = list(value)
+        out[f.name] = value
+    return out
+
+
+def work_from_json(data: Mapping[str, Any], catalog: Catalog) -> WorkItem | None:
+    """`work_json`'s item back; None when its problem is no longer loaded. Fields this
+    core.plan does not have are dropped; fields the JSON lacks keep their defaults."""
+    known = {f.name for f in fields(WorkItem)}
+    values: dict[str, Any] = {}
+    for key, value in data.items():
+        if key in known:
+            values[key] = tuple(value) if isinstance(value, list) else value
+    problem_id = values.get("problem")
+    if problem_id is not None:
+        problem = catalog.problems.get(str(problem_id))
+        if problem is None:
+            return None
+        values["problem"] = problem
+    return WorkItem(**values)
 
 
 def plan_settings(
@@ -190,8 +221,7 @@ def plan_settings(
         "keep_tier": setup.keep_tier,
         "growth_band": GROWTH_BANDS.get(setup.growth_band, GROWTH_BANDS["standard"]),
     }
-    known = {f.name for f in fields(CourseSettings)}
-    return CourseSettings(**{k: v for k, v in values.items() if k in known})
+    return CourseSettings(**values)
 
 
 def exam_spec(exam: Exam, days: StudyDays) -> ExamSpec | None:
@@ -534,8 +564,8 @@ class PracticeEngine:
         with its plan (`extra.plan`) once, in the order served, as the planner planned it,
         with its first try's outcome (None for a worked example), the model's update and the
         minutes spent. Every session of the day counts, so a second session goes on where the
-        first stopped. Practice-test problems are left out: they are not the day's plan (their
-        first tries still update the learner and the certifiers)."""
+        first stopped. Practice-test problems are in it too: the planner counts them toward a
+        skill's streak but keeps them out of the day's plan and its cap (by role)."""
         with self._lock:
             learned = self._sync()
             catalog = self.catalog()
@@ -545,8 +575,6 @@ class PracticeEngine:
                 plan = row.extra.get("plan")
                 if row.study_day != day.isoformat() or row.presentation_id is None:
                     continue
-                if row.role in OFF_PLAN_ROLES:
-                    continue  # a practice test is not the day's plan (its tries still count)
                 if isinstance(plan, Mapping):
                     groups.setdefault(row.presentation_id, []).append(row)
             out: list[tuple[str, ServedItem]] = []
@@ -872,6 +900,12 @@ def _served_item(
     plan = first.extra.get("plan")
     if not isinstance(plan, Mapping):
         return None
+    work = plan.get("work")
+    if isinstance(work, Mapping):  # logged whole: the item exactly as the planner returned it
+        found = work_from_json(work, catalog)
+        if found is None:
+            return None  # its card is no longer loaded
+        return _outcome(first, group, found, plan, learned)
     problem_id = plan.get("problem")
     problem = catalog.problems.get(str(problem_id)) if problem_id else None
     if problem_id and problem is None:
@@ -894,8 +928,21 @@ def _served_item(
         sitting=first.sitting,
         time_limit=plan.get("time_limit"),
     )
+    return _outcome(first, group, item, plan, learned)
+
+
+def _outcome(
+    first: Attempt,
+    group: Sequence[Attempt],
+    item: WorkItem,
+    plan: Mapping[str, Any],
+    learned: _Learned,
+) -> tuple[str, ServedItem] | None:
+    """A served item with its outcome: the first try's observation of the item's problem
+    (None for a worked example), the model's update and the minutes spent."""
     correct: bool | None = None
     update: UpdateRecord | None = None
+    problem = item.problem
     if problem is not None:
         for row in group:
             obs = learned.seen.get((row.id or 0, problem.problem_id))
