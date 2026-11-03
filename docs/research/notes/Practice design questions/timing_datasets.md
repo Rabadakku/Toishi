@@ -110,7 +110,7 @@ df["correct_first"] = (df["correct"] == 1).astype(int)                # 'correct
 - **Size.**
   - `plogs` (one row per student × problem, scaffolds excluded): 20,752,836 rows; 277,512 students; 134,655 problems; 197,022 assignments; 2,505,225 assignment logs (`log_id` = one student doing one assignment). 508 rows repeat a (`log_id`, `problem_id`) pair.
   - `slogs` (one row per action): 95,866,415 rows.
-  - `pdets`: 134,655 rows, with 391 repeated `problem_id` rows despite the documentation. De-duplicate before joining.
+  - `pdets`: 134,655 rows but only 134,264 distinct `problem_id`s, despite the documented one entry per problem. De-duplicate before joining.
   - `adets`: 197,022 assignments, of which 184,313 are problem sets and 12,709 skill builders. 938,503 `plogs` rows come from skill builders and 19.8M from problem sets.
   - Dates: problem start times run 2019-09-02 to 2020-10-29. Only assignments started before July 2020 are included, but their later problems are kept.
 - **Steps.** `plogs` holds main problems only; tutoring is recorded as actions. `slogs` action counts:
@@ -137,8 +137,11 @@ df["correct_first"] = (df["correct"] == 1).astype(int)                # 'correct
   - Check against `slogs`: in the first 3,000,000 `slogs` rows, 621,698 problem instances matched `plogs`. For them, `time_on_task` was within 1 s of `problem_started → problem_finished` for 96.97%, shorter for 3.02%, and never longer. In the same sample, started-to-finished had a median of 48.2 s but a p99 of 100,863 s. So `time_on_task` removes the long away gaps seen in the raw action timestamps; I did not check exactly how it is computed.
   - Time to first action: from `slogs`, `problem_started →` the first `correct_response`, `wrong_response`, `open_response`, `tutoring_requested` or `answer_requested`. Median 39.2 s and p90 289.5 s in the sample, with no negatives. It exceeds `time_on_task` by more than 1 s for 2.5% of problems.
   - `alogs.time_on_task` sums the problem times per assignment. `sdets` and `adets` carry per-student and per-assignment mean time on task.
-- **Timestamps.** `start_time` (plogs) and `timestamp` (slogs) are strings with microseconds and an explicit UTC offset, and **the offset varies by row**: `+00:00` on 14.75M plogs rows, `-04:00` on 2.74M, `-05:00` on 3.26M. Always parse with `utc=True`; naive parsing would mix UTC with local time.
-- **Ordering.** Sort `plogs` by (`student_id`, `start_time`). The file is nearly in order: 165,846 of 20,475,324 consecutive same-student pairs go backwards, with no exact ties. Sort `slogs` by `timestamp` within `log_id`.
+- **Timestamps.** `start_time` (plogs) and `timestamp` (slogs) are strings with microseconds and an explicit UTC offset, and **the format switches partway through each file**.
+  - In `plogs`, rows 0 to 5,999,999 carry `-04:00` or `-05:00`, matching US Eastern daylight and standard time, and every row from 6,000,000 on carries `+00:00`. Overall that is 14.75M UTC rows, 2.74M at `-04:00` and 3.26M at `-05:00`.
+  - `slogs` switches to `+00:00` after its first 9,000,000 rows.
+  - Absolute times agree when parsed with `utc=True`; naive parsing would mix UTC with local clock time. For local time of day, convert to US Eastern; that this is the intended zone is an inference from the offsets.
+- **Ordering.** Sort `plogs` by (`student_id`, `start_time`). The file is nearly in order: 165,846 of 20,475,324 consecutive same-student pairs go backwards, with no exact ties. Sort `slogs` by `timestamp` within `log_id`, after parsing it with `utc=True`; sorting the raw strings would break across the offset switch.
 - **First attempt and correctness.**
   - `correct` is True or False for whether "the student's first answer to the problem was correct". It is **missing for 25.8% of rows**: incomplete problems without a teacher grade, and ungraded open responses. Counts: 10,555,682 True, 4,832,846 False, 5,364,308 missing.
   - Also `attempt_count` (median 1, mean 1.33, max 724), `answer_before_tutoring`, `fraction_of_hints_used`, `answer_given` (12.2% True) and `problem_completed` (1.7% False).
