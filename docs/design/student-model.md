@@ -1,4 +1,4 @@
-# Student model and practice planner (design spec v1.2)
+# Student model and practice planner (design spec v1.5)
 
 - Status: **Accepted for implementation**, 2026-11-02. The coordinator designed it (owner instruction: the coordinator makes the design decisions; agents gather sources, review and implement).
 - History: v1 (f96e77e) went through an adversarial review (`student-model-critique.md`, 400a10a): 3 blockers, 11 majors, 7 minors. v1.1 accepts all of them, with the judgment calls noted where a fix was adapted. The disposition of each finding is in section 11.
@@ -11,6 +11,19 @@
 - v1.3 (2026-11-02): certification counts accuracy only, and pace is checked by the M2 and M3 sittings against an exam-style block time (3.7).
   - v1.2 counted an M2 or M3 success only when its time was also at or under T*. With σ_T ≈ 0.45, a 0.90 posterior then needs a median near 0.5·T*, which contradicts the pace definition in 3.3.
   - It also revoked a passed sitting at once.
+- v1.4 (2026-11-02): pace training (`pace-training.md`).
+- v1.5 (2026-11-02): from an external audit of the review document, each claim checked against the code and the testable ones against real logs (`external-audit-response.md`):
+  - the execution update is assumed-density filtering, not a clipped Newton step (3.4);
+  - pace means finishing an exam-length set in its time (3.3);
+  - τ is updated after every timed success (3.3);
+  - certification changes only on days with new evidence (3.7);
+  - the feasibility check is recalibrated (4.3);
+  - a ladder item counts toward its stuck skill's allowance (4.2);
+  - the clock never pauses in a sitting (2.4);
+  - two truth models are added (6.2).
+
+  Corrections from a fact-check of the review document: the sitting's pass rates (72% and 40%, 3.7), the level rule (3.7), and the time definition (2.4).
+- Built: v1.3 (wave 2 planner merged 2026-11-02). v1.4 and v1.5 are designed and are built after the wave 2 merge.
 - Supersedes: where they conflict, the skill-level FSRS design in spec ENG-1 to ENG-19 and QUE-1 to QUE-24 (ADR-0020 records this, per DEV-17), and the earlier proposal on branch engine-design (`docs/design/learning-engine.md`), whose simulator stays as background.
 - Research: `docs/research/notes/Student model design/` (six notes), plus the earlier notes they cite.
 - Evidence grades:
@@ -80,7 +93,12 @@ T*_j = `time:` if set, else 0.5 + m·steps_j + m·max(0, tier − 3), in minutes
 
 Basis: MIT 18.01 exams run 0.50 min per point and 7.1–10.0 min per numbered problem (parts included). A 4–6-step problem gets 6.5–9.5 min. **C**: the formula rests on two anchors for three constants. Steps 2 and 6.3 check m against the student's first timed sets.
 
-Measured time is active solving time: shown to submit, minus pauses, minus a typing allowance of 5 s plus 0.3 s per character of the expected answer (TIME-4).
+**Measured time** (TIME-4 to TIME-6) is the solve time plus a typing allowance:
+- The solve time runs from the problem shown to the first keystroke in the answer, minus pauses.
+- The allowance is 5 s plus 0.3 s per character of the expected answer.
+- The total is capped at 4·T* (at least 3 and at most 30 minutes).
+- No valid time is recorded for an attempt with a pause over 2 minutes, the first attempt after the Mac wakes, an attempt with the worked example opened, or an Untimed session.
+- **In a sitting the clock never pauses (v1.5).** Pauses count toward the time, and a pause over 2 minutes makes the time unknown, which voids the sitting. Otherwise a student could leave the app during a closed-book sitting with the clock stopped (external audit 5.2).
 
 ## 3. Student model
 
@@ -133,15 +151,24 @@ P_j    = σ( a_{ℓ_j} + b · logit(P_raw) )                 per-tier recalibrat
 ln T_j = ln T*_j + τ + τ_{s(j)} − α·ln(1 + n̄_j) + ε,    ε ~ N(0, σ_T²)
 n̄_j    = mean of n_k over j's COURSE components (background excluded)
 median_j = T*_j · exp(τ + τ_s − α·ln(1 + n̄_j))
-pace_ok  ⇔  median_j ≤ T*_j
+pace_ok  ⇔  P(an exam-length set of the skill's representative problems is finished
+              within its summed T*) ≥ 0.8                                         (v1.5)
 ```
 
-- **Pace definition:** the median at or under standard (the owner's "at a pace about what an exam would be"). The v1 product-with-probability definition demanded medians of about 0.5·T*.
-- **Alternatives** to offer the owner on the course page: P(T ≤ 1.3·T*) ≥ 0.9, or a 6-problem set finished within its summed T* with probability 0.9, which needs a median of about 0.72·T*. **C**.
+- **Pace definition (v1.5): the owner's "at a pace about what an exam would be", read as an exam's rule.** An exam gives a fixed total time, so pace means finishing an exam-length set in its time, 4 times out of 5.
+  - The set has N copies of the skill's representative problems at the tier, with N = the exam's problem count when one is entered, else 6. The chance is the sitting's Fenton-Wilkinson formula (3.7) with the student's σ_T.
+  - At σ_T = 0.45 and equal problems this is a median of about 0.78·T* (6 problems; 0.75 for 3, 0.81 for 10).
+  - **Why not "median ≤ T*" (v1.3).** At a median of T*, a student finishes a 6-problem exam in time 33% of the time and completes 82% of it on average (Monte Carlo, σ_T 0.45). The same student makes a 3-problem sitting's time only 40% of the time, so the M2/M3 sitting could never be planned at the stated pace (external audit 2.1).
+  - Under v1.5, a student exactly at the accuracy target and at pace passes a 3-problem sitting with probability 0.73 × 0.75 ≈ 0.55.
+  - **C** for the 0.8. The owner can choose 0.9, a median of about 0.72·T*.
 - **Updates:**
-  - τ_s are per-skill offsets (prior N(0, 0.3²), shrunk toward 0 with κ = 5).
   - α is fixed at 0.05 (audit #14: 0.036 in Statics and 0.030 in EdNet after item and student effects; Delaney et al. 1998's 0.25–0.54 is for repeating identical problems). **B**.
-  - τ and σ_T are updated by conjugate normal regression on correct first tries with valid time.
+  - **τ and the per-skill offsets τ_s are the exact posterior given every timed success (v1.5).** The model is x_i = τ + u_{s(i)} + ε_i, with x the log time net of ln T*_j and the speed-up, ε ~ N(0, σ_T²), u_s ~ N(0, σ_T²/κ_s) (κ_s = 5, the v1.3 shrinkage), and τ ~ N(ln 2, 0.5²).
+    - The posterior precision of τ is 1/0.5² + Σ_s κ_s·n_s / (σ_T²·(κ_s + n_s)), and its mean is the matching precision-weighted average of the skills' mean residuals x̄_s (and the prior mean).
+    - Each skill's offset is τ_s = n_s·(x̄_s − τ̂)/(n_s + κ_s).
+    - It is closed form, order-independent and updated after every timed success. v1.4's recency weighting (`pace-training.md` 3.1) enters through the weighted n_s and x̄_s.
+    - v1.3 changed τ only at refits. Until the first refit (150 attempts), an exam-ready student (true median 0.70–0.75·T*) then needed about 30–50 timed successes on one skill before its sitting could be planned (external audit 2.2).
+  - σ_T is refit (3.6).
 - **No speed forgetting in v1.** Speed decays less than accuracy in skill-decay data (Arthur et al. 1998, by task type; **C**).
 
 ### 3.4 Updating from an attempt
@@ -170,10 +197,14 @@ b_k = (1 − q_k) / (1 − P_raw)      exact under independence; b_k ≤ 1 alway
    - Choose S' so that R(7 days; S') equals r·R(7 d; S_good) + (1 − r)·R(7 d; S_again). Matching at 7 days, the maintenance horizon, replaces v1's log mix, which was optimistic at short horizons (critique 16).
    - When r is 0 or 1 this is exactly FSRS.
 2. **Counts.** C_k += (1 − b_k)·w_day, where w_day = 1 for the component's first success of the study day and 0.25 after that (critique 12; DASH-style short window). F_k += b_k·(1 − m_k).
-3. **Execution posterior.** One step on the marginal likelihood at the posterior mean. Here σ means σ(μ_η − δ_ℓ) **without** the uncertainty adjustment, which is for predictions only:
-   - **Success:** the likelihood factorizes, so the step is exact: g = 1 − σ, h = σ(1 − σ).
-   - **Failure:** L(η) = 1 − A·σ(η), with A = (1 − s)·R_k·Π_{i≠k} q_i (the other components, k's memory, and no slip). The score is g = −A·σ(1 − σ)/(1 − Aσ). The observed information is h = max(0, [u''(1 − u) + u'²]/(1 − u)²), clipped at 0, with u = Aσ, u' = Aσ(1 − σ) and u'' = Aσ(1 − σ)(1 − 2σ) (critique 4: v1's complete-data information made variances up to 11× too small).
-   - Update v_k ← 1/(1/v_k + h), then μ_k ← μ_k + v_k·g.
+3. **Execution posterior (v1.5: assumed-density filtering).** The posterior of x = μ_η − δ_ℓ, N(m, v) with v = v_k after the drift, is updated by moment matching. This uses the probit approximation σ(x) ≈ Φ(λx), λ² = π/8, the same approximation the prediction's uncertainty adjustment uses. With c = √(1 + λ²v), z = λm/c and r = φ(z)/Φ(z):
+   - **Success** (likelihood ∝ Φ(λx)): m₁ = m + v·λ·r/c, v₁ = v − v²λ²·r·(z + r)/c².
+   - **Failure** (likelihood 1 − A·Φ(λx), with A = (1 − s)·R_k·Π_{i≠k} q_i: the other components, k's memory and the slip). Let p = Φ(z) and Z = 1 − A·p. The posterior is a two-part mixture, with mean m₀ = (m − A·p·m₁)/Z, second moment M₀ = (v + m² − A·p·(v₁ + m₁²))/Z, and v₀ = M₀ − m₀².
+   - **A matched wrong answer** (κ, 3.4): with probability κ, k* failed and every other component succeeded; otherwise it is an ordinary miss. Each component's update is the κ-mixture of its two scenario posteriors: k*'s failure with A = R_k*, the others' success step, and the ordinary failure step. For component means m_a, m_b and variances v_a, v_b, the mean is κ·m_a + (1 − κ)·m_b and the variance κ(v_a + m_a²) + (1 − κ)(v_b + m_b²) − mean².
+   - Then μ_k ← μ_k + (new mean − m) and v_k ← the new variance.
+   - **Basis** (external audit 1.7; `external-audit-response.md`). v1.3 took one Newton step with the observed information clipped at 0 (critique 4). Its information was 0 on 27% of failures in both Statics and XES3G5M, because a conjunctive failure's likelihood is not log-concave.
+     - Moment matching is the standard Gaussian filter for such likelihoods (assumed-density filtering, as in expectation propagation).
+     - Run prequentially over both datasets, it lowered log loss by 0.0077 and 0.0121 nats per attempt (0.0014 and 0.0015 after recalibration), with AUC up 0.003 and 0.002 and 84% and 90% of students better predicted. The gain held at every constant tried in both datasets (prior variance, γ, drift, slip). Expected Fisher information, the audit's own fix, did not help. **B**.
    - Between study days, v_k grows by q_drift·Δdays (0.01, **C**), so the model can follow learning outside the app.
 
 **Per background component:** only the execution posterior (step 3), with its blame.
@@ -201,12 +232,18 @@ b_k = (1 − q_k) / (1 − P_raw)      exact under independence; b_k ≤ 1 alway
 
 ### 3.6 Refitting
 
-Refit s, a_ℓ, b, τ and σ_T by MAP (δ_4 and φ are held fixed in v1; 3.1), re-running the filter over the log for each candidate. Score each candidate on the most recent 20% of attempts (a time-series split).
+Refit s, a_ℓ, b and σ_T by MAP (δ_4 and φ are held fixed in v1, 3.1; τ is updated after every timed success from v1.5, 3.3):
+- **Fit on the first 80% of attempts;** each first try is predicted by the filter before it sees it, plus the log prior of 3.5.
+- **Score on the most recent 20%** (a time-series split). The filter is re-run over the whole log with each parameter set, so the held-out predictions are prequential too.
+- Only s changes the filter's path. Replays are cached by (s, δ_4, φ), and (a_ℓ, b) are scored on the cached logits without re-running. The time block needs no replay.
+- **Two blocks are adopted separately:** accuracy (s, a_ℓ, b), scored by the first try's binary log loss, and time (σ_T), scored by the negative log density of the log time.
 
 **When** (on evidence, not the calendar; changed 2026-11-02, the earlier "every 14 days or 300 attempts" had no basis): a fit of k parameters on n attempts has an expected excess log loss of about k/(2n) nats per attempt, so a refit pays when the log has grown by a fixed fraction since the last one.
 - The first refit once the log holds 150 first tries (30 held out, the minimum to adopt).
 - Then when the log has grown by half since the last refit (the stale fit then costs at most 0.25·k/n, under the 0.003 margin from n ≈ 750 with k = 9), or by 1,000 attempts (slow drift).
 - At once when the predictions since the last refit fail calibration in the large: |Σ(y − p)| > 3·√Σp(1 − p), with at least 50 of them.
+  - Looked at after every attempt, a perfectly calibrated model trips this about 3% of the time per refit interval (2.0% by 200 attempts, 3.7% by 1,000; simulated), not 0.3%. That is harmless: the refit adopts only on a held-out gain.
+  - Every refit, adopted or not, restarts the window, so a rejected refit can't loop.
 - Whenever the student presses Refit now (the report shows the held-out loss before and after, calibration by tier and gap, and whether the fit was kept).
 This gives 7 refits in the first 2,000 attempts (at 150, 225, 338, 507, 761, 1,142 and 1,713), when the priors are most likely wrong for the student, and about one per 1,000 after that.
 
@@ -225,20 +262,26 @@ The component FSRS weights are **not** refit in v1. A refit needs a soft-label f
 For skill s and tier ℓ, keep a Beta posterior over s's first-try success at tier ℓ:
 - **Evidence:** first tries on problems whose main skill is s at tier ℓ, from any role, sittings included. A correct first try is a success at every tier; time does not enter the posterior (v1.3).
 - **Weighting:** each attempt is weighted by 2^(−age/30 days), so evidence fades and a lapse shows.
-- **Prior:** Beta(κ0·p̂, κ0·(1 − p̂)), where p̂ is the model's calibrated prediction for a representative problem and κ0 = 4.
+- **Prior:** Beta(κ0·p̂, κ0·(1 − p̂)), where p̂ is the model's current calibrated prediction, averaged over the skill's representative problems at the tier (3.8), and κ0 = 4.
+  - **The forecast has already seen the same attempts, so they count twice** (found while checking the external audit).
+  - A new single-component skill certifies M1 after 4 straight successes: the forecast is then 0.84, and the prior supplies 4 of the 8 observations' weight. With 2 or 3 new components it takes 6 or 8 (the real model and rule, 2 successes a study day).
+  - That matches the common 3–5-in-a-row mastery rules. The check is the operating rate: the 6.2 gate compares false certification with the baseline. **C**.
 
 **M1 and Keep are certified** when the posterior mean ≥ the accuracy target and the effective direct observations reach 3.
-- *Basis:* mastery criteria based on 3–5 correct answers differ little in retention. In the ALEKS randomized threshold trial, 5 vs 3 changed retention by about 0.02 at 30% more time (Matayoshi et al. 2025, **A**). N-consecutive-correct and EMA thresholds perform close to model-based ones (Pelánek & Řihák 2017, **B**).
+- *Basis:* mastery criteria based on 3–5 correct answers differ little in retention. In the ALEKS randomized threshold trial, 5 vs 3 correct answers in a row changed retention by about 0.02 (most differences under 0.02), for 6.6 instead of 5.1 minutes per topic (Matayoshi et al. 2025, **A**). N-consecutive-correct and EMA thresholds perform close to model-based ones (Pelánek & Řihák 2017, **B**).
+
+**Certification changes only on days with new evidence (v1.5).** A key is certified or revoked only after a day's first tries at that key are added. Between those days the posterior relaxes toward the forecast and drives maintenance (4.3), but it changes no certification.
+- *Basis:* after gaps over 30 days, the model under-predicts success by 4–6 points even after recalibration (Statics, XES3G5M). A forecast-driven revocation would therefore mostly revoke students who are fine (external audit 2.5). **B**.
 
 **M2 and M3 are certified only by a sitting**, a closed-book timed block of unseen problems (`wave2-planner.md` §2). The skill passes when:
 - every one of its sitting problems is correct on the first try, unaided;
 - the total active time of those problems is at or under the sum of their T*. This is an exam's rule: a block of problems in the block's time.
 
-A sitting is planned only when the model gives the skill at least a 0.5 chance of passing it, on the chosen problems (product of their P_j, times the chance that the summed lognormal times fit the limit). A student whose median is 0.8·T* (σ_T 0.45) fits 3 problems in their time about 68% of the time; at a median of T*, about 36%.
+A sitting is planned only when the model gives the skill at least a 0.5 chance of passing it, on the chosen problems: the product of their P_j, times the chance that the summed lognormal times fit the limit (Fenton-Wilkinson, which Monte Carlo confirms within 0.002). A student whose median is 0.8·T* (σ_T 0.45) fits 3 problems in their time about 72% of the time; at a median of T*, about 40%. The sitting assumes independent times; the 4·T* cap also censors long ones.
 
-**Revoked** when the posterior mean falls below target − 0.10 (hysteresis). The skill then returns to growth at that tier. Pace is not revoked: speed decays less than accuracy (3.3).
+**Revoked** when the posterior mean falls below target − 0.10 (hysteresis), judged on evidence days only. The skill then returns to growth at that tier. Pace is not revoked: speed is assumed to decay less than accuracy (3.3, **C**).
 
-**Level** = the highest ℓ such that every tier ℓ′ ≤ ℓ that has problems is certified (critique 17).
+**Level** = the highest tier ℓ that is certified with no lower tier holding it back (critique 17). A lower tier holds it back when it is uncertified and either has the evidence to be judged (n_eff at its threshold) or was certified before. A tier the planner never tested (typically tier 1, drilled only in the new block) neither counts nor blocks.
 
 ### 3.8 Representative problems
 A skill's representative problems at tier ℓ are its pool problems at ℓ. For display it averages over at most 10 of them, chosen deterministically (lowest IDs after excluding retired cards).
@@ -290,7 +333,7 @@ Each skill is in one of these:
 - maintenance (its milestone certified);
 - Keep;
 - **limited by careless errors:** every course component's e ≥ 0.97 and the direct posterior still below target, with the shortfall explained by s. No component growth; shown as "check your work";
-- **struggling:** 3 study days at the full growth allowance with no rise in the direct posterior. The app shows the textbook reference and adds growth for the prerequisites of its weakest component.
+- **struggling:** 3 study days at the full growth allowance with no rise in the direct posterior. The app shows the textbook reference and adds growth for the prerequisites of its weakest component. A ladder item (4.6) counts toward the allowance of the stuck skill whose slot it fills (v1.5). Before, a skill stuck every day never reached this rule, because its rung-2 item counted for the prerequisite (external audit 7.4; wave 2 notes).
 
 Separately, each skill is ahead, on track or behind against its milestone deadline.
 
@@ -326,7 +369,7 @@ Separately, each skill is ahead, on track or behind against its milestone deadli
 
 No simulated trajectories are used (critique 2).
 
-**Feasibility check at course setup and after each refit:** the best attainable chance on a typical tier-ℓ* problem is (1 − s)·0.99^K̄. If it is below the target, the course page says so, with the numbers.
+**Feasibility check at course setup and after each refit:** the best attainable chance on a typical tier-ℓ* problem is σ(a_ℓ* + b·logit((1 − s)·0.99^K̄)). That is the ceiling (1 − s)·0.99^K̄ recalibrated like every prediction, so it is on readiness's scale (v1.5; external audit 3.6). If it is below the target, the course page says so, with the numbers. The 0.99 per-component ceiling is **C**.
 
 ### 4.4 Choosing the problem
 
@@ -349,7 +392,7 @@ Grade **C** within that range.
 **Variety:** no card twice in a study day; no repeat within 90 days when the pool allows; template parameters not repeated within 180 days; a different surface form from the skill's previous problem when possible.
 
 ### 4.5 Order (mixed sets)
-Items are interleaved across skills. There are no two consecutive items of one skill, except a new skill's example and first problems (4.3). Confusable pairs are placed adjacent with probability 0.5, randomized and logged.
+Items are interleaved across skills. There are no two consecutive items of one skill, except a new skill's example and first problems (4.3) and the day's sitting, which is one block. Confusable pairs are placed adjacent with probability 0.5, randomized and logged.
 - *Basis:* interleaved math beat blocked (Rohrer & Taylor 2007: 63% vs 20%; classroom RCT d = 0.83, Rohrer et al. 2020; meta-analysis g = 0.34 for math, Brunmair & Richter 2019). **A** for mixing.
 - The discrimination mechanism is contested (Rowlandson & Simpson 2024 null). **B** for the adjacency rule.
 
@@ -401,7 +444,9 @@ Run the planner against simulated students whose truth comes from different mode
 - (c) a PPE/ACT-R learner with spacing-dependent decay;
 - (d) a learner tuned to Rohrer & Taylor 2006 forgetting;
 - (e) slow learners at half rate, and slip 0.12;
-- (f) a component map with 10% of tags missing and 10% wrong.
+- (f) a component map with 10% of tags missing and 10% wrong;
+- (g) step-abandonment learners, who give up at their first failed step (v1.5, from the external audit);
+- (h) distracted timers, with bursty off-task pauses (v1.5, from the external audit).
 
 Compare against a baseline: skill-level FSRS with 3 correct in a row and random problems at the target tier.
 
@@ -441,7 +486,7 @@ The student can enter exam scores, and the app compares them with readiness for 
 | Minutes per step, Calc I | 1.5 (+0.5 to read) | C |
 | Milestones | +5 / +14 / +28 days (changed 2026-11-02 from +7 / +21 / +35, from syllabus data); exams pull M2 to exam − 2 | B, B, C |
 | Keep after the course | 0.80 at tier 3 | Existing LIB-8 |
-| Certification | κ0 = 4; n_eff ≥ 3 (M1, Keep); M2 and M3 by sitting (planned at a predicted pass chance ≥ 0.5; all correct, block time ≤ ΣT*); half-life 30 days; revoke at target − 0.10 | B (thresholds), C (values) |
+| Certification | κ0 = 4; n_eff ≥ 3 (M1, Keep); M2 and M3 by sitting (planned at a predicted pass chance ≥ 0.5; all correct, block time ≤ ΣT*, the clock never paused); half-life 30 days; revoke at target − 0.10; changes on evidence days only (v1.5) | B (thresholds), C (values) |
 | Growth allowance | 3 per skill per day; stop after 2 consecutive successes | C (direction A) |
 | New skill block | worked example + up to 3 until a success | B |
 | Reference checks | every 10th item | B |
@@ -451,8 +496,10 @@ The student can enter exam scores, and the app compares them with readiness for 
 | κ (matched-error confidence) | 0.95 | C |
 | Spread-blame trigger | top suspect b < 0.7 | C |
 | q_drift | 0.01 per day | C |
-| Refit | first at 150 attempts, then log growth ×1.5 or +1,000, calibration drift (z > 3, n ≥ 50) or Refit now; 20% tail; margin 0.003 nats and p < 0.1 | B |
-| Pace | median ≤ T* | C, owner can choose another |
+| Refit | first at 150 attempts, then log growth ×1.5 or +1,000, calibration drift (z > 3, n ≥ 50) or Refit now; fit on the first 80%, scored on the 20% tail; margin 0.003 nats and p < 0.1 | B |
+| Pace | an exam-length set (the exam's problem count, else 6) finished within its summed T* with probability ≥ 0.8: a median of about 0.78·T* at σ_T 0.45 (v1.5; v1.3: median ≤ T*) | C, owner can choose 0.9 |
+| Execution update | assumed-density filtering under the probit approximation (v1.5; v1.3: one clipped Newton step) | B |
+| τ | exact posterior after every timed success, prior N(ln 2, 0.5²) (v1.5; v1.3: refit) | C (prior), B (update) |
 
 ## 8. Implementation interfaces (the contract for parallel work)
 

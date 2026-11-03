@@ -30,8 +30,11 @@ Grades as in `student-model.md`: **A** direct evidence in a similar setting, **B
 
 ### 3.1 The model tracks current speed
 
-- **Per-skill offsets** τ_s become an exponentially weighted mean of the skill's residuals, with a half-life of 10 timed correct answers on that skill. Shrinkage toward 0 with κ = 5 stays. **B** for recency, **C** for the half-life.
-- **The student speed level** τ keeps its refit. Between refits, the running residual mean that the refit check uses is also recency-weighted, with a half-life of 50 answers (audit #28). **B**.
+- **τ and τ_s are the exact posterior given every timed success** (v1.5, `student-model.md` 3.3), not only at refits. Recency enters through their sufficient statistics:
+  - each skill's count n_s and mean residual x̄_s are exponentially weighted, with a half-life of 10 timed correct answers on that skill;
+  - τ's own evidence is weighted with a half-life of 50 timed answers overall (audit #28);
+  - shrinkage toward 0 with κ = 5 stays.
+  - **B** for recency, **C** for the half-lives.
 - **α stays shared at 0.05.** Shrunk per-student rates gained little on held-out times (MSE 0.2892 vs 0.2930), against 0.2839 for recency (audit #27).
 
 ### 3.2 Who gets pace work
@@ -47,7 +50,8 @@ Pace work replaces growth items within the skill's allowance of 3 a day. It neve
 
 1. **Varied problems at the milestone tier, with an aim.**
    - Problems come from families not served in the last 7 days, never repeats.
-   - The header shows an aim before the student starts: "Aim 8:00 · your recent typical 12:30". The time appears after submitting, as now.
+   - The aim is exam pace (v1.5, `student-model.md` 3.3): the median that finishes an exam-length set in its time 4 times out of 5, about 0.78·T* at σ_T 0.45.
+   - The header shows the aim before the student starts: "Aim 6:15 · your recent typical 12:30". The time appears after submitting, as now.
    - There is no countdown and no cut-off, because time pressure pushes students toward error-prone strategies (§2).
    - Basis: feedback and goals after accuracy (§2), **B**.
 2. **One method-recognition item a day** where the skill's section has them (`kind: method`: "which method fits"), answered quickly.
@@ -60,7 +64,7 @@ Pace work replaces growth items within the skill's allowance of 3 a day. It neve
 
 ### 3.4 What the student sees
 
-- **Skills page:** a pace column showing the current typical time against the standard (for example "1.6× → 1.3× over 2 weeks"), and the state "pace work".
+- **Skills page:** a pace column showing the current typical time against exam pace (for example "1.6× → 1.3× over 2 weeks"), and the state "pace work".
 - **Home:** "Pace work: 3 skills".
 - **Study:** the aim line on pace items.
 
@@ -72,7 +76,7 @@ Pace work replaces growth items within the skill's allowance of 3 a day. It neve
 
 ## 4. Contract changes (for the builder)
 
-- `core.learner`: an exponentially weighted `skill_speed` and running residual mean (half-lives 10 and 50, constants in `types.py`). Golden tests are updated deliberately.
+- `core.learner`: τ and τ_s as the exact posterior over exponentially weighted per-skill statistics (half-lives 10 per skill and 50 overall, constants in `types.py`; v1.5 3.3). Golden tests are updated deliberately.
 - `core.plan`:
   - a `pace` role in `Role` and `ROLES`;
   - a `pace_work(skill)` status rule (3.2);

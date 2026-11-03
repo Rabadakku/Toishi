@@ -1,6 +1,6 @@
 # Model assumption audit (2026-11-02)
 
-Every assumption of the student model (`core/learner`) and the planner (`core/plan`), checked against the research notes and against real learning logs. Each check ends in a verdict and an action. The analysis code lives outside the repository; the numbers below are its output.
+Every assumption of the student model (`core/learner`) and the planner (`core/plan`), checked against the research notes and against real learning logs. Each check ends in a verdict and an action. The analysis code is in `docs/research/analysis/`; the numbers below are its output.
 
 ## How it was checked
 
@@ -48,7 +48,19 @@ Every assumption of the student model (`core/learner`) and the planner (`core/pl
 | 28 | Speed is a stable all-time average (τ_s as a plain mean) | Held-out times are predicted best by recency-weighted speed (half-life about 50 answers) plus the shared speed-up: MSE 0.2839, against 0.2930 for the shared speed-up alone and 0.2950 for no speed-up (EdNet). Statics agrees: half-life 50 is best (1.652 vs 1.702) | Wrong | Track current speed with recency weighting (v1.4, pace training) |
 | 29 | Slow students catch up with practice | EdNet: the slowest third at the start (2.1× the fastest third's time) got 12% faster over their answers, and the fastest third 1%; the gap went from 2.1× to about 1.9× | Not by ordinary practice | Speed has to be trained, not only measured (v1.4) |
 
-Code: `/home/claude/analysis/speed_slopes.py` and `speed_heldout.py`.
+Code: `docs/research/analysis/speed_slopes.py` and `speed_heldout.py`.
+
+### Update rule and memory, added 2026-11-02 (night, for the external audit)
+
+The app's model on both datasets, one rule changed at a time (`external-audit-response.md` has the full table and method).
+
+| # | Assumption | Evidence | Verdict | Action |
+|---|---|---|---|---|
+| 30 | One Newton step with observed information clipped at 0 (3.4) | The information is 0 on 27% of failures in both datasets. Assumed-density filtering (moment matching under the probit approximation) lowers log loss by 0.0077 (Statics) and 0.0121 (XES3G5M) nats per attempt, and by 0.0014 and 0.0015 after recalibration. AUC rises, 84% and 90% of students are better predicted, and the gain holds at every constant tried. Expected Fisher information does not help | Wrong | ADF (design v1.5) |
+| 31 | A failed first try starts the memory at Good (3.4) | Starting it at Again is worse in both datasets (0.5344 vs 0.5339; 0.5420 vs 0.5403) | Supported | Keep |
+| 32 | A failed try adds soft successes to the components not blamed (3.4) | Removing them changes log loss by under 0.0004 in both datasets | Neutral | Keep (the expected-count form) |
+| 33 | A failure attributed to execution still strengthens memory (3.4) | A rule where failures never raise stability scores the same to four decimals | Neutral | Keep |
+| 34 | Combination rule (3.2), post hoc | Geometric mean 0.5061, weakest link 0.5064, soft minimum 0.5059–0.5064, product 0.5138 (Statics, recalibrated) | As #12 | Unchanged: check on our own data |
 
 ## Verdicts: planner
 
