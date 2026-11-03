@@ -70,6 +70,7 @@ from core.engine.param_sets import (
     domain_of,
     fit_log_key,
     history_key,
+    kind_of_set,
     load_set,
     params_key,
     recomputed_key,
@@ -880,16 +881,20 @@ class Engine:
         return items >= FIT_GROWTH * max(1, int(last.get("items") or 0))
 
     def auto_fit(
-        self, *, writing: Callable[[], AbstractContextManager[Any]] | None = None
+        self,
+        *,
+        writing: Callable[[], AbstractContextManager[Any]] | None = None,
+        kinds: Sequence[TargetKind] = ("skill", "flashcard"),
     ) -> list[FitReport]:
         """I7: run every due fit (guarded by C2, followed by C3). Call it when the app is
         idle, e.g. at the end of a session or on launch. `writing`: a lock held only while
         a decision is written and memory recomputed, so a caller can fit in the background
         without a recompute interleaving with a graded answer (the fitting itself, the
-        slow part, runs outside it)."""
+        slow part, runs outside it). `kinds`: which sets to fit (wave 2 fits only the
+        flashcard sets: problems no longer have skill FSRS cards)."""
         reports: list[FitReport] = []
         for set_id in self.parameter_sets():
-            if not self.fit_due(set_id):
+            if kind_of_set(set_id) not in kinds or not self.fit_due(set_id):
                 continue
             try:
                 decision = self.fit_decision(set_id)

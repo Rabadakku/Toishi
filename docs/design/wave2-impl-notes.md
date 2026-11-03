@@ -166,7 +166,9 @@
   reads for "grown by half" and the drift check over the predictions since.
 - *Calibration* bins the cached update records, which are the replay under the current parameters
   (every new version replays). Gap bins: first, under 1 day, 1-7, 8-30, over 30 days since the main
-  skill's previous first try. Component count: course components only, at least 1.
+  skill's previous first try. Component count: course components only, at least 1. (Phase 3: the
+  labels became plain words, which the Model page shows as sent: "Tier 1", "First practice",
+  "1 to 7 days", "2 skills", ...)
 - *Several courses.* A course's "blocks" are its plan's items up to its last new-block item (checks
   placed inside that run stay there); the rest go round-robin. Hours to keep pace add up over the
   courses.

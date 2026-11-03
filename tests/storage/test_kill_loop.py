@@ -2,13 +2,15 @@
 
 A child process (tests/storage/kill_child.py, forked per round from a process that imported
 the core once) works through the real StudyService on an on-disk profile with the Test pack
-attached: right, wrong and unsure answers, hints, give-ups, continue, undo and session end.
+attached: right and unsure answers, wrong tries then right, give-ups, continue, undo and
+session end.
 After each step returns it writes an acknowledgment to a pipe. This test kills it with
 SIGKILL at seeded random moments, hundreds of times, and after every kill checks:
 
 - every acknowledged answer is present (and every acknowledged undo is still undone);
 - PRAGMA integrity_check (and foreign_key_check) is ok;
-- the stored memory equals a replay of the log (Engine.recompute_memory changes nothing);
+- the stored flashcard memory equals a replay of the log (Engine.recompute_memory changes
+  nothing), and the learner state (a pure function of the log, C3) replays without error;
 - the session resumes at the item that was on screen.
 
 It also kills Anki imports of the fixture decks (read, plan, apply, the engine hook, each
@@ -38,6 +40,8 @@ import pytest
 from app.packs import shipped_packs
 from core import cards, grader
 from core.engine import Engine
+from core.model import CourseSetup
+from core.practice import PracticeEngine
 from core.queue import StudyService
 from core.storage import Database, Storage
 from core.storage.backups import BackupManager
@@ -47,7 +51,7 @@ from core.storage.profiles import ProfilePaths
 from core.storage.schema import MIGRATIONS, USER_SCHEMA_VERSION, user_version
 from tests.importers.conftest import FIXTURES as DECKS
 from tests.storage.data import dump_state
-from tests.storage.study_driver import key_checker
+from tests.storage.study_driver import COURSE, key_checker
 from tests.storage.test_migrations import load_v1_fixture
 
 pytestmark = pytest.mark.slow
@@ -254,6 +258,7 @@ def check_answers(root: Path, pack: Path, expected: Expected, done: Round) -> No
     with Storage.open(ProfilePaths(root), pack_paths=[pack], clock=clock) as storage:
         engine = Engine(storage)
         assert engine.recompute_memory().changed == ()  # stored state == replay of the log
+        PracticeEngine(storage).state()  # the learner replays the log as it is
         today = engine.days().day_of(clock.now_ms()).isoformat()
         open_session = storage.users.latest_open_session()
         turn = StudyService(storage, checker=key_checker).resume()
@@ -274,6 +279,8 @@ def test_acknowledged_answers_survive_sigkill(
         s.users.set_setting("study.timezone", "America/New_York")
         for section in s.packs.sections():
             s.users.set_section_state(section.id, "learning")
+        start = Engine(s).days().day_of(START)
+        s.users.set_course_setup(CourseSetup(course_id=COURSE, start=start))
     rng = random.Random(SEED)  # noqa: S311 -- reproducible kill moments
     expected = Expected()
     now, steps = START + 60_000, 0

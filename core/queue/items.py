@@ -16,7 +16,9 @@ type JsonObject = dict[str, Any]
 ReasonTag = Literal["review", "relearn", "new-skill", "check", "exam-prep", "redo", "stretch"]
 ItemKind = Literal["problem", "example", "flashcard"]
 ItemStatus = Literal["pending", "done", "skipped"]
-Mode = Literal["daily", "lighter", "focused", "practice-test", "extra"]
+# Wave 2: the daily plan (core.practice), tomorrow's planned problems early, practice tests.
+# Sessions saved by older builds may still name "lighter" or "focused"; they are closed.
+Mode = Literal["daily", "practice-test", "extra"]
 
 TAG_LABELS: Mapping[ReasonTag, str] = {
     "review": "Review",
@@ -65,6 +67,33 @@ WHY: Mapping[str, str] = {
     "flashcard": "A flashcard due today.",
     "flashcard.refresher": "A flashcard on the skill you just missed, as a quick refresher.",
     "flashcard.reshow": "A flashcard you just missed, once more after a few other items.",
+    # Wave 2: the planner's roles (core.plan) and the stuck ladder's rungs.
+    "new-skill.practice": "A new skill: a worked example, then a few problems until you get one "
+    "right on the first try.",
+    "review.growth": "Practice toward this skill's next milestone, at a level you should get right "
+    "most of the time.",
+    "review.maintenance": "A review: without one now, this skill would slip below your target.",
+    "check.reference": "A reference check: a random problem at your level that keeps the "
+    "predictions honest.",
+    "exam-prep.sitting": "A certification sitting: closed book and timed. Each problem counts on "
+    "its first try.",
+    "relearn.smaller": "A smaller step first: a problem on the part that went wrong.",
+    "relearn.prerequisite": "A prerequisite first: the skill this one builds on.",
+    "review.extra-plan": "Extra practice: a problem from tomorrow's plan, done today.",
+}
+
+# The planner's roles as the study screen labels them: (tag, label, "Why is this here?").
+ROLE_REASONS: Mapping[str, tuple[ReasonTag, str, str]] = {
+    "new": ("new-skill", "New skill", "new-skill.practice"),
+    "growth": ("review", "Practice", "review.growth"),
+    "maintenance": ("review", "Review", "review.maintenance"),
+    "check": ("check", "Check", "check.reference"),
+    "sitting": ("exam-prep", "Sitting", "exam-prep.sitting"),
+    "practice-test": ("exam-prep", "Practice test", "exam-prep.test"),
+}
+LADDER_REASONS: Mapping[str, tuple[ReasonTag, str, str]] = {
+    "ladder:smaller": ("relearn", "Smaller step", "relearn.smaller"),
+    "ladder:prerequisite": ("relearn", "Prerequisite", "relearn.prerequisite"),
 }
 
 
@@ -104,6 +133,10 @@ class PlanItem:
     method: bool = False  # a which-method item (ENG-16): mixed in, outside the problem count
     status: ItemStatus = "pending"
     result: JsonObject | None = None
+    # Wave 2: what the planner said about the item (core.plan.WorkItem): problem (its problem
+    # id), milestone, missed, p, ladder, sitting, time_limit, priority, reason, tier, block,
+    # minutes and version (the learner parameters that made p). None: an older plan's item.
+    meta: JsonObject | None = None
 
     @property
     def slots(self) -> int:
@@ -123,6 +156,8 @@ class PlanItem:
         out = {name: getattr(self, name) for name in _ITEM_FIELDS}
         if self.result is not None:
             out["result"] = dict(self.result)
+        if self.meta is not None:
+            out["meta"] = dict(self.meta)
         return out
 
     @classmethod

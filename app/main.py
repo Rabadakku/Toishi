@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from app.media import ProfileMedia
 from app.paths import index_html
 from core import cards, grader
 from core.health import health_check
+from core.model import CourseSetup
 from core.storage import ProfileManager
 
 DEBUG_ENV = "TOISHI_DEBUG"  # 1 = Web Inspector, dev runs only
@@ -124,8 +126,9 @@ def _key_answers(card: Any) -> list[dict[str, Any]]:
 
 def study_self_test(pack_paths: Callable[[], Sequence[Path]]) -> dict[str, Any]:
     """Through the bridge, in a temporary data folder: create a profile, attach the Test
-    pack, switch a section on, start a session, answer one problem right and one wrong,
-    undo the wrong one. Every step is a call the page makes."""
+    pack, switch a section on and set its course up to start today, start a session, answer
+    one problem right and one wrong (a wrong try, then give up), undo the wrong one. Every
+    step is a call the page makes."""
     steps: list[dict[str, Any]] = []
 
     def step(name: str, ok: bool, detail: str = "") -> None:
@@ -142,6 +145,9 @@ def study_self_test(pack_paths: Callable[[], Sequence[Path]]) -> dict[str, Any]:
             sections = [s for c in courses for u in c["units"] for s in u["sections"]]
             step("pack attached", bool(sections), f"{len(sections)} sections")
             api.library_set_state({"id": sections[0]["id"], "state": "learning"})
+            users = api._store().users
+            start = date.fromisoformat(users.study_day())
+            users.set_course_setup(CourseSetup(course_id=courses[0]["id"], start=start))
             today = api.study_today()
             step("today", today["problems"] > 0, f"{today['problems']} problems")
             turn = api.study_start({"mode": "daily"})
@@ -174,12 +180,8 @@ def study_self_test(pack_paths: Callable[[], Sequence[Path]]) -> dict[str, Any]:
                     turn = api.study_next({"item_key": key})
                     continue
                 wrong = [{**a, "value": "987654321"} for a in _key_answers(card)]
-                result = {"outcome": "retry"}
-                for _try in range(problem["attempts_allowed"]):
-                    result = api.study_submit({"item_key": key, "answers": wrong, "timing": timing})
-                    if result["outcome"] != "retry":
-                        break
-                if result["outcome"] == "invalid":
+                result = api.study_submit({"item_key": key, "answers": wrong, "timing": timing})
+                if result["outcome"] in ("retry", "invalid"):  # "Not quite": then Give up
                     result = api.study_give_up({"item_key": key, "timing": timing})
                 step("wrong answer", result["outcome"] == "incorrect", result["outcome"])
                 answered.append(key)

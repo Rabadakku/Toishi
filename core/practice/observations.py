@@ -9,7 +9,8 @@ Rows that are not voided become `Observation`s in (at, id) order:
   self-grade says so: `extra.correct` on v3 rows, the strict label (`extra.strict_ok`, else a
   Good rating) on older ones.
 - **Aided** (a failure whatever the verdict): a give-up before any answer, a worked example
-  opened before answering, or (rows before v3) a hint before answering.
+  opened before answering, a problem brought back by undo after its solution was on screen
+  (`extra.solution_seen`, ADR-0019 item 7), or (rows before v3) a hint before answering.
 - `matched_wrong` is the column; `minutes` is `valid_minutes` on v3 rows. Older rows derive it
   from the speed time the old engine stored (`extra.speed_ms`: solve time plus the typing
   allowance, capped, TIME-4/5) when the first try is correct and its timing is valid under
@@ -69,6 +70,7 @@ def observations_of(attempt: Attempt, catalog: Catalog) -> tuple[Observation, ..
     aided = (
         (attempt.verdict == "gave-up")
         or attempt.example_opened
+        or _solution_seen(attempt)
         or (attempt.role is None and attempt.hints_used > 0)
     )
     correct = _correct(attempt)
@@ -107,6 +109,10 @@ def minutes_of(attempt: Attempt) -> float | None:
     return float(speed) / MS_PER_MINUTE
 
 
+def _solution_seen(attempt: Attempt) -> bool:
+    return bool(attempt.extra.get("solution_seen"))
+
+
 def _correct(attempt: Attempt) -> bool:
     if attempt.verdict in SELF_VERDICTS:
         own = attempt.extra.get("correct")
@@ -130,7 +136,7 @@ def _part_observations(
             continue
         tries = int(entry.get("attempts", 1) or 1)
         gave_up = bool(entry.get("gave_up"))
-        aided = (gave_up and tries <= 1) or attempt.example_opened
+        aided = (gave_up and tries <= 1) or attempt.example_opened or _solution_seen(attempt)
         correct = bool(entry.get("correct")) and tries == 1 and not gave_up
         yield Observation(
             attempt_id=attempt_id,

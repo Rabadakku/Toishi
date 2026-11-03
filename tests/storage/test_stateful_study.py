@@ -1,13 +1,14 @@
 """DEV-9: a Hypothesis state machine over the real StudyService, on an on-disk profile with
 the Test pack attached.
 
-Rules: start, answer (right, wrong, unsure, hint first, give up), continue, undo, end,
-reopen storage (close, then a new Storage on the same files) and the clock moving by
-minutes, by days, across the 4 AM rollover and across a daylight-saving change in
-America/New_York. Invariants after every step: nothing but a QueueError (the message the
-student sees) escapes; every committed attempt survives, reopens included; the stored
-memory equals a replay of the log; due dates are finite and never before the last review;
-an undo restores exactly the state before the answer.
+Rules: start, answer (right, wrong then right, unsure, give up, wrong then give up),
+continue, undo, end, reopen storage (close, then a new Storage on the same files) and the
+clock moving by minutes, by days, across the 4 AM rollover and across a daylight-saving
+change in America/New_York. Invariants after every step: nothing but a QueueError (the
+message the student sees) escapes; every committed attempt survives, reopens included; the
+stored flashcard memory equals a replay of the log, and so does the learner state the
+session keeps cached (C3); due dates are finite and never before the last review; an undo
+restores exactly the state before the answer.
 
 The fast profile runs in check.sh fast (well under 30 s); the long one is marked slow.
 """
@@ -36,12 +37,14 @@ from hypothesis.stateful import (
 from app.packs import shipped_packs
 from core import cards, grader
 from core.engine import Engine
-from core.model import FlashcardState, SkillState
+from core.model import CourseSetup, FlashcardState, SkillState
+from core.practice import PracticeEngine, build_observations
 from core.queue import Plan, QueueError, StudyService, Turn
 from core.storage import Storage
 from core.storage.clock import DEFAULT_ROLLOVER_HOUR, FixedClock, from_ms, to_ms
 from core.storage.profiles import ProfilePaths
 from tests.storage.study_driver import (
+    COURSE,
     How,
     answer,
     attempt_ids,
@@ -52,7 +55,7 @@ from tests.storage.study_driver import (
 
 NY = ZoneInfo("America/New_York")
 START = datetime(2026, 10, 31, 9, 0, tzinfo=NY)  # the clocks go back at 2 AM on Nov 1
-HOWS: list[How] = ["right", "right", "wrong", "unsure", "hint", "give-up"]
+HOWS: list[How] = ["right", "right", "wrong", "unsure", "give-up", "wrong-give-up"]
 
 
 @pytest.fixture(scope="module")
@@ -108,6 +111,7 @@ class StudyMachine(RuleBasedStateMachine):
         users.set_setting("study.timezone", "America/New_York")
         for section in self.store.packs.sections():
             users.set_section_state(section.id, "learning")
+        users.set_course_setup(CourseSetup(course_id=COURSE, start=START.date()))
         self._look()
 
     def teardown(self) -> None:
@@ -174,7 +178,7 @@ class StudyMachine(RuleBasedStateMachine):
         return None if session is None else str(Plan.from_json(session.plan).mode)
 
     @precondition(lambda self: not self.session_open)
-    @rule(mode=st.sampled_from(["daily", "daily", "daily", "extra", "lighter"]))
+    @rule(mode=st.sampled_from(["daily", "daily", "daily", "extra"]))
     def start(self, mode: str) -> None:
         finals = self._final_ids()
         self.turn = self._quietly(lambda: self.service.start({"mode": mode}))
@@ -184,11 +188,10 @@ class StudyMachine(RuleBasedStateMachine):
         self._look()
 
     @precondition(lambda self: self.session_open)
-    @rule(mode=st.sampled_from(["daily", "extra", "lighter"]))
+    @rule(mode=st.sampled_from(["daily", "extra"]))
     def start_again(self, mode: str) -> None:
         # Start with a session open resumes it when it is of that mode (QUE-16); another mode
-        # grades the answer on screen and ends it first. Lighter over daily turns the open
-        # session into a Lighter set (QUE-10; test_lighter_start_over_an_open_daily_session).
+        # commits the answer on screen and ends it first.
         key, same = current_key(self.store), self._open_mode() == mode
         finals = self._final_ids()
         self.turn = self._quietly(lambda: self.service.start({"mode": mode}))
@@ -210,13 +213,6 @@ class StudyMachine(RuleBasedStateMachine):
         if result is not None:
             self.before_answer = snapshot  # what undo must bring back (QUE-15)
             self._count(f"answer-{how}")
-        self._look()
-
-    @precondition(lambda self: self.can_answer())
-    @rule()
-    def hint(self) -> None:
-        self._quietly(self.service.hint)
-        self._count("hint")
         self._look()
 
     @rule(how=st.sampled_from(HOWS))
@@ -348,6 +344,18 @@ class StudyMachine(RuleBasedStateMachine):
             return
         assert Engine(self.store).recompute_memory().changed == ()
 
+    @invariant()
+    def the_learner_state_equals_a_replay_of_the_log(self) -> None:
+        """The state the session keeps cached and updates one answer at a time equals a
+        replay of the whole log (the catalog reused: rebuilding it each step costs more than
+        the rest of the step)."""
+        if self.svc is None:
+            return
+        practice = self.service.practice
+        observations = build_observations(self.store.users.attempts(), practice.catalog())
+        replayed, _ = practice.model().replay(practice.params(), observations)
+        assert practice.state() == replayed
+
 
 def run(examples: int, steps: int, *, pack: list[Path]) -> dict[str, int]:
     StudyMachine.pack = pack
@@ -366,48 +374,33 @@ def run(examples: int, steps: int, *, pack: list[Path]) -> dict[str, int]:
     return dict(StudyMachine.stats)
 
 
-def test_lighter_start_over_an_open_daily_session(test_pack: list[Path], tmp_path: Path) -> None:
-    """Found by DEV-9: Lighter over a daily session whose new skill's worked example is on
-    screen dropped that item from the plan and raised StorageError, leaving the session
-    unresumable. The skill leaves with its example (QUE-10) and the session moves on."""
+def test_answers_in_one_millisecond_replay_to_the_cached_learner_state(
+    test_pack: list[Path], tmp_path: Path
+) -> None:
+    """C3 with ties: every answer at the same instant (the clock never moves), right and
+    wrong, so observations tie on time and only their attempt ids order them. The state the
+    session updated one answer at a time equals a replay of the log."""
     clock = FixedClock(START, tz=NY)
     with Storage.open(
         ProfilePaths(tmp_path / "p"), pack_paths=test_pack, clock=clock, create=True
     ) as storage:
         for section in storage.packs.sections():
             storage.users.set_section_state(section.id, "learning")
+        storage.users.set_course_setup(CourseSetup(course_id=COURSE, start=START.date()))
         svc = StudyService(storage, checker=key_checker)
-        daily = svc.start({"mode": "daily"})
-        assert daily.type == "problem"
-        lighter = svc.start({"mode": "lighter"})
-        assert (lighter.session_id, lighter.mode) == (daily.session_id, "lighter")
-        resumed = svc.resume()
-        assert resumed is not None
-        assert current_key(storage) is not None
-
-
-def test_learning_answers_in_one_millisecond_replay_to_the_stored_memory(
-    test_pack: list[Path], tmp_path: Path
-) -> None:
-    """Found by DEV-9: a skill graduating with its answers in one millisecond stored a
-    difficulty its replay did not give (C3). Its events tie on target, time and rating, and
-    each took the first (block start) annotation, so the replay kept only the last one."""
-    clock = FixedClock(START, tz=NY)  # never moves: every answer at the same instant
-    with Storage.open(
-        ProfilePaths(tmp_path / "p"), pack_paths=test_pack, clock=clock, create=True
-    ) as storage:
-        for section in storage.packs.sections():
-            storage.users.set_section_state(section.id, "learning")
-        svc = StudyService(storage, checker=key_checker)
-        turn = svc.next() if svc.start({"mode": "daily"}).type == "problem" else None
-        while turn is not None and turn.type == "problem" and turn.problem is not None:
-            if storage.users.skill_states().get("test.alg.arithmetic", None) is not None and (
-                storage.users.skill_states()["test.alg.arithmetic"].stability is not None
-            ):
-                break
-            answer(svc, storage, turn, "right")
+        turn = svc.start({"mode": "daily"})
+        hows: list[How] = ["right", "wrong", "give-up", "right", "wrong-give-up"]
+        answered = 0
+        while turn.type == "problem" and turn.problem is not None and answered < 12:
+            if turn.problem.kind == "problem":
+                answer(svc, storage, turn, hows[answered % len(hows)])
+                answered += 1
+            elif turn.problem.kind == "flashcard":
+                svc.rate_flashcard(3)
             turn = svc.next()
-        assert Engine(storage).recompute_memory().changed == ()
+        assert answered >= 5
+        assert len(svc.practice.observations()) >= 5
+        assert svc.practice.state() == PracticeEngine(storage).state()
 
 
 def test_dst_change_is_found() -> None:

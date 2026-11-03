@@ -26,12 +26,13 @@ def to_dict(obj: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StartRequest:
+    """Wave 2 has three modes: the daily plan, extra practice (tomorrow's planned problems)
+    and practice tests. Focused, weak-spot and lighter sessions are gone; a request that still
+    names their fields is read without them."""
+
     mode: Mode = "daily"
     untimed: bool | None = None  # None: the profile's default (session.untimed_default)
-    count: int | None = None  # focused, extra practice, practice test size
-    section_id: str | None = None  # focused practice on a section ...
-    skill_id: str | None = None  # ... or one skill ...
-    weak_spots: bool = False  # ... or the current weak spots
+    count: int | None = None  # extra practice, practice test size
     exam_id: int | None = None  # practice test
     timed: bool = False  # practice test at exam pace
 
@@ -42,9 +43,6 @@ class StartRequest:
             mode=data.get("mode", "daily"),
             untimed=data.get("untimed"),
             count=data.get("count"),
-            section_id=data.get("section_id"),
-            skill_id=data.get("skill_id"),
-            weak_spots=bool(data.get("weak_spots", False)),
             exam_id=data.get("exam_id"),
             timed=bool(data.get("timed", False)),
         )
@@ -137,7 +135,6 @@ class CardView:
     kind: str  # problem, example, flashcard, cloze, find-error, method
     prompt_md: str
     parts: tuple[PartView, ...]
-    hint_count: int
     calculator: bool
     angles: str
     plot: str | None = None
@@ -162,19 +159,45 @@ class Progress:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TextbookView:
+    """The textbook line under a problem: "OpenStax Calculus Volume 1" "§4.1"."""
+
+    book: str
+    section: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SittingView:
+    """A certification sitting's item: closed book, its skill block's time limit (the sum of
+    that skill's problems' standard times) and the active time spent on that block so far.
+    Nothing is cut off at the limit."""
+
+    id: str
+    index: int  # 1-based position of this problem in the sitting
+    total: int  # problems in the sitting
+    time_limit_ms: int
+    block_elapsed_ms: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ProblemView:
     item_key: str
     kind: Literal["problem", "example", "flashcard"]
     card: CardView
     reason: Reason
-    attempts_allowed: int
+    attempts_allowed: int  # tries per answer box; 0: no limit (problems are retried freely)
     tries_used: int
-    hints_shown: tuple[str, ...] = ()
     draft: str | None = None
     active_ms: int = 0  # active time already counted (resume)
     target_ms: int | None = None  # shown only after submitting
     untimed: bool = False
     practice_test: bool = False
+    # Wave 2: the planner's role and reason code ("band", "ladder:smaller", ...), the
+    # textbook pointer, and the sitting this problem belongs to.
+    role: str | None = None
+    plan_reason: str | None = None
+    textbook: TextbookView | None = None
+    sitting: SittingView | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -184,7 +207,8 @@ class PartVerdictView:
     read_as: str | None = None
     message: str = ""
     feedback: str | None = None
-    wrong_step: int | None = None  # the matched known wrong answer's @step (picker preselect)
+    # The matched known wrong answer's @step: shown with the solution only (None in a retry)
+    wrong_step: int | None = None
     final: bool = True  # multi-part: this part's verdict is final (right, or out of tries)
     tries_used: int = 0  # multi-part: tries used on this part
 
@@ -200,13 +224,11 @@ class SolutionView:
     active_ms: int | None
     target_ms: int | None
     time_text: str | None  # "3:40 · target 4:00"
-    needs_diagnosis: bool  # show "What went wrong?"
     confident_error: bool
     can_mark_too_easy: bool
     textbook_ref: str | None = None
     rubric: tuple[str, ...] = ()  # self-graded: the checklist to tick
     shown_work: tuple[StepView, ...] = ()  # find-error: the work beside the correct solution
-    preselect_step: int | None = None  # "What went wrong?": the matched wrong answer's step
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -222,35 +244,22 @@ class FindErrorView:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AttemptResult:
+    """A submission's result. After a wrong try (outcome retry) it carries the verdict only:
+    no checker message, no known-wrong-answer feedback and no step, which the student sees
+    only with the solution (a give-up, or Show solution after a wrong first try)."""
+
     item_key: str
     outcome: Literal["retry", "correct", "incorrect", "invalid", "self-grade", "recorded"]
     verdicts: tuple[PartVerdictView, ...] = ()
     message: str = ""
     solution: SolutionView | None = None
     tries_used: int = 0
-    attempts_allowed: int = 1
+    attempts_allowed: int = 1  # 0: no limit
     rating: int | None = None  # flashcards: the rating recorded
     break_due: bool = False
     find_error: FindErrorView | None = None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class HintReveal:
-    item_key: str
-    index: int  # 1-based
-    total: int
-    text: str
-    rating_effect: Literal["hard", "again"]
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Diagnosis:
-    item_key: str
-    choice: str
-    follow_up: str  # one sentence: what happens next
-    rating: int | None  # the rating the answer was recorded with
-    slip_accepted: bool = False
-    checks: tuple[str, ...] = ()  # names of skills a check was planned on
+    can_retry: bool = False  # a wrong try: the problem stays open (Retry or Give up)
+    first_try_counted: bool = False  # this submission was the problem's first try
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -285,29 +294,22 @@ class ExamLine:
     name: str
     course_id: str | None
     days_left: int
-    practice_test: bool  # ENG-8: offered in the final 14 days
+    practice_test: bool  # ENG-8: offered in the final 21 days
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Proposal:
-    kind: Literal["overload", "backlog"]
-    message: str
-    options: tuple[str, ...]
+class SittingLine:
+    """A sitting planned today and its skills (names)."""
 
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class GoalPreview:
-    """I2: what a goal change does to the queue. A goal that raises retention moves live
-    due dates earlier; the skills it makes due are spread over the next days."""
-
-    newly_due: int  # skills whose due date moves to today or earlier
-    message: str  # "This makes 12 skills due."
-    per_day: Mapping[str, int] = field(default_factory=dict)  # ISO day -> skills spread there
+    id: str
+    skills: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TodayView:
-    """Home: "Today: 20 problems, about 55 minutes", split by course. Never an overdue count."""
+    """Home: today's items and minutes by course and by role, what keeping pace costs, the
+    skills behind or set aside, today's sittings and the planner's notes. Never an overdue
+    count. Skill lists hold names, not ids."""
 
     day: str
     problems: int
@@ -315,12 +317,18 @@ class TodayView:
     flashcards: int
     courses: tuple[CourseLine, ...]
     exams: tuple[ExamLine, ...]
-    proposals: tuple[Proposal, ...] = ()
     session_open: bool = False
     done_today: bool = False
-    vacation: bool = False
-    extra_practice_available: bool = False
+    extra_practice_available: bool = False  # tomorrow's planned problems, to do early
     flashcards_to_rewrite: int = 0  # I5: leech flashcards, not shown until rewritten
+    by_role: Mapping[str, int] = field(default_factory=dict)
+    hours_to_keep_pace: float | None = None  # per week
+    hours_basis: Literal["history", "standard", "none"] = "none"
+    standard_hours: float | None = None  # the courses' reference hours per week
+    behind: tuple[str, ...] = ()
+    set_aside: tuple[str, ...] = ()
+    sittings: tuple[SittingLine, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -371,8 +379,8 @@ class Summary:
     extra_practice_available: bool
     practice_tests: tuple[ExamLine, ...] = ()
     test: TestResult | None = None
-    # Learning-phase problems ready later today (a new skill's block goes on, ENG-2): the
-    # summary says so instead of only "Tomorrow: ...".
+    # Problems today's plan still holds after this session (it ended before the plan was
+    # done): the summary says so as well as "Tomorrow: ...".
     ready_today: int = 0
 
 
@@ -387,9 +395,8 @@ class Turn:
     progress: Progress | None = None
     result: AttemptResult | None = None  # the verdict screen, when resuming after an answer
     summary: Summary | None = None
-    message: str = ""
+    message: str = ""  # e.g. the set-aside notice after the answer that set a skill aside
     break_due: bool = False
-    lighter: bool = False
     mode: str = "daily"
 
 

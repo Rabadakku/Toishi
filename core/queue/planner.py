@@ -92,7 +92,7 @@ def build_plan(
     settings = snap.settings
     policy = policy or policy_for(settings.policy)
     daily = mode in DAILY_MODES
-    lighter = lighter or mode == "lighter"
+    lighter = lighter or str(mode) == "lighter"  # a plan an older build saved
     day = snap.day.isoformat()
     if daily and snap.vacation is not None and snap.vacation.covers(snap.day):
         return Plan(day=day, mode=mode, policy=policy.name, info={"vacation": True})

@@ -46,7 +46,7 @@ from core.learner.types import (
     UpdateRecord,
 )
 from core.model import Attempt, CourseSetup, Exam, LearnerParams
-from core.plan import Certifier
+from core.plan import Certifier, intro_dates
 from core.plan import plan_day as plan_course_day
 from core.plan import statuses as plan_statuses
 from core.plan.status import PlanContext
@@ -58,12 +58,16 @@ from core.storage import Storage, StorageError
 DAY_MS = 86_400_000
 MS_PER_MINUTE = 60_000.0
 PRIOR_VERSION = SharedParams().version  # "prior"
+OFF_PLAN_ROLES = frozenset({"practice-test"})  # logged with a plan, never a served item
 GROWTH_BANDS: Mapping[str, tuple[float, float]] = {
     "standard": (0.70, 0.90),  # design 4.4
     "hard": (0.50, 0.75),  # wave2-planner.md 3: the owner's harder band
 }
-GAP_LABELS = ("first", "under 1 day", "1-7 days", "8-30 days", "over 30 days")
+# Calibration bins as the Model page shows them (plain words, sent as they are).
+TIER_LABELS = tuple(f"Tier {t}" for t in range(1, 6))
+GAP_LABELS = ("First practice", "Under a day", "1 to 7 days", "8 to 30 days", "Over 30 days")
 GAP_LAST = GAP_LABELS[-1]
+COMPONENT_LABELS = ("1 skill", "2 skills", "3 or more skills")
 
 
 # ---------------------------------------------------------------------- the planner's model
@@ -235,6 +239,7 @@ class _Learned:
     state: StudentState
     observations: list[Observation] = field(default_factory=list)
     records: dict[tuple[int, str], UpdateRecord] = field(default_factory=dict)
+    seen: dict[tuple[int, str], Observation] = field(default_factory=dict)  # same keys
     examples: dict[ComponentId, date] = field(default_factory=dict)  # first day shown
     spent: dict[int, float] = field(default_factory=dict)  # attempt id -> its presentation's
     presentations: dict[str, list[int]] = field(default_factory=dict)  # minutes; row ids
@@ -412,9 +417,9 @@ class PracticeEngine:
             if new and learned.observations and order(new[0]) < order(learned.observations[-1]):
                 return self._rebuild(key, model, catalog, params, newest, voided)
             for obs in new:
-                learned.records[(obs.attempt_id, obs.problem.problem_id)] = model.update(
-                    learned.state, obs
-                )
+                key_of = (obs.attempt_id, obs.problem.problem_id)
+                learned.records[key_of] = model.update(learned.state, obs)
+                learned.seen[key_of] = obs
                 learned.observations.append(obs)
             for cached in self._certifiers.values():
                 if cached.generation == learned.generation:
@@ -449,6 +454,7 @@ class PracticeEngine:
                 (o.attempt_id, o.problem.problem_id): r
                 for o, r in zip(observations, records, strict=True)
             },
+            seen={(o.attempt_id, o.problem.problem_id): o for o in observations},
         )
         _note_rows(learned, rows)
         self._learned = learned
@@ -522,6 +528,61 @@ class PracticeEngine:
         """Skills whose worked example was shown on an earlier study day."""
         with self._lock:
             return frozenset(k for k, d in self._sync().examples.items() if d < day)
+
+    def served(self, day: date) -> list[tuple[str, ServedItem]]:
+        """The day's served plan items, from the log: each presentation the session wrote
+        with its plan (`extra.plan`) once, in the order served, as the planner planned it,
+        with its first try's outcome (None for a worked example), the model's update and the
+        minutes spent. Every session of the day counts, so a second session goes on where the
+        first stopped. Practice-test problems are left out: they are not the day's plan (their
+        first tries still update the learner and the certifiers)."""
+        with self._lock:
+            learned = self._sync()
+            catalog = self.catalog()
+            rows = self._storage.users.attempts(since=self.days().start(day) - DAY_MS)
+            groups: dict[str, list[Attempt]] = {}
+            for row in sorted(rows, key=lambda a: a.id or 0):
+                plan = row.extra.get("plan")
+                if row.study_day != day.isoformat() or row.presentation_id is None:
+                    continue
+                if row.role in OFF_PLAN_ROLES:
+                    continue  # a practice test is not the day's plan (its tries still count)
+                if isinstance(plan, Mapping):
+                    groups.setdefault(row.presentation_id, []).append(row)
+            out: list[tuple[str, ServedItem]] = []
+            for group in sorted(groups.values(), key=lambda g: g[0].id or 0):
+                served = _served_item(group, catalog, learned)
+                if served is not None:
+                    out.append(served)
+            return out
+
+    def scheduled_skills(self) -> frozenset[ComponentId]:
+        """The course skills of the set-up courses: their pace schedule says when each is
+        introduced (flashcards on them follow it, not the Library's section states)."""
+        with self._lock:
+            catalog = self.catalog()
+            out: set[ComponentId] = set()
+            for course_id in self.active_courses():
+                out |= {
+                    s.skill_id for s in catalog.courses[course_id].course.skills if not s.background
+                }
+            return frozenset(out)
+
+    def introduced(self, day: date) -> frozenset[ComponentId]:
+        """Skills of the set-up courses introduced on or before the day (design 4.1)."""
+        with self._lock:
+            catalog = self.catalog()
+            out: set[ComponentId] = set()
+            for course_id in self.active_courses():
+                settings = self.settings(course_id)
+                if settings is None:
+                    continue
+                try:
+                    intro = intro_dates(catalog.courses[course_id].course, settings)
+                except ValueError:  # settings the pack no longer fits: nothing introduced
+                    continue
+                out |= {k for k, d in intro.items() if d <= day}
+            return frozenset(out)
 
     # ------------------------------------------------------------------ plans
 
@@ -655,7 +716,7 @@ class PracticeEngine:
         last: dict[ComponentId, int] = {}
         for obs, p in pairs:
             y = is_success(obs)
-            by_tier[str(obs.problem.tier)].append((y, p))
+            by_tier[TIER_LABELS[min(max(obs.problem.tier, 1), 5) - 1]].append((y, p))
             previous = last.get(obs.problem.main_skill)
             by_gap[_gap_label(previous, obs.at_ms)].append((y, p))
             last[obs.problem.main_skill] = obs.at_ms
@@ -664,11 +725,11 @@ class PracticeEngine:
                 for k in obs.problem.components
                 if k not in catalog.components or not catalog.components[k].background
             )
-            by_k["3+" if course >= 3 else str(max(1, course))].append((y, p))
+            by_k[COMPONENT_LABELS[min(max(course, 1), 3) - 1]].append((y, p))
         return Calibration(
-            by_tier=_bins(by_tier, [str(t) for t in range(1, 6)]),
+            by_tier=_bins(by_tier, TIER_LABELS),
             by_gap=_bins(by_gap, GAP_LABELS),
-            by_components=_bins(by_k, ["1", "2", "3+"]),
+            by_components=_bins(by_k, COMPONENT_LABELS),
         )
 
     def last_refit(self) -> LearnerParams | None:
@@ -776,16 +837,17 @@ def _finite(value: float) -> float:
 
 
 def _gap_label(previous: int | None, at_ms: int) -> str:
-    """first; under 1 day; 1-7 days (1 <= gap <= 7); 8-30 days (7 < gap <= 30); over 30."""
+    """Days since the main skill's previous first try: none (first practice); under 1; 1 to 7
+    (1 <= gap <= 7); 8 to 30 (7 < gap <= 30); over 30."""
     if previous is None:
-        return "first"
+        return GAP_LABELS[0]
     gap = (at_ms - previous) / DAY_MS
     if gap < 1.0:
-        return "under 1 day"
+        return GAP_LABELS[1]
     if gap <= 7.0:
-        return "1-7 days"
+        return GAP_LABELS[2]
     if gap <= 30.0:
-        return "8-30 days"
+        return GAP_LABELS[3]
     return GAP_LAST
 
 
@@ -798,6 +860,54 @@ def _bins(groups: Mapping[str, list[tuple[bool, float]]], labels: Sequence[str])
         observed = sum(1.0 for y, _ in pairs if y) / n if n else 0.0
         out.append(Bin(label, n, round(predicted, 6), round(observed, 6)))
     return tuple(out)
+
+
+def _served_item(
+    group: Sequence[Attempt], catalog: Catalog, learned: _Learned
+) -> tuple[str, ServedItem] | None:
+    """One presentation's rows (id order) as the planner's served item: the item from the
+    plan the first row carries, the outcome from the observation of the item's problem (the
+    first try's row, or a multi-part card's final row)."""
+    first = group[0]
+    plan = first.extra.get("plan")
+    if not isinstance(plan, Mapping):
+        return None
+    problem_id = plan.get("problem")
+    problem = catalog.problems.get(str(problem_id)) if problem_id else None
+    if problem_id and problem is None:
+        return None  # its card is no longer loaded
+    tier = plan.get("tier")
+    item = work_item(
+        skill_id=str(plan.get("skill") or first.skill_id or ""),
+        role=first.role or "growth",
+        problem=problem,
+        example_card=None if problem is not None else first.card_id,
+        expected_minutes=float(plan.get("minutes") or 0.0),
+        priority=int(plan.get("priority") or 1),
+        tier=None if tier is None else int(tier),
+        milestone=first.milestone,
+        missed=bool(first.missed),
+        block=bool(plan.get("block")),
+        p=first.plan_p,
+        reason=str(plan.get("reason") or ""),
+        ladder=int(first.ladder or 0),
+        sitting=first.sitting,
+        time_limit=plan.get("time_limit"),
+    )
+    correct: bool | None = None
+    update: UpdateRecord | None = None
+    if problem is not None:
+        for row in group:
+            obs = learned.seen.get((row.id or 0, problem.problem_id))
+            if obs is not None:
+                correct = is_success(obs)
+                update = learned.records.get((row.id or 0, problem.problem_id))
+                break
+        if correct is None:
+            return None  # nothing answered yet (a held answer is graded before re-planning)
+    minutes = learned.spent.get(first.id or 0)
+    course = str(plan.get("course") or "")
+    return course, ServedItem(item=item, correct=correct, update=update, minutes=minutes)
 
 
 def _note_rows(learned: _Learned, rows: Sequence[Attempt]) -> None:

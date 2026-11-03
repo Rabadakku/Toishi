@@ -1,5 +1,6 @@
 """A student driving the real StudyService on the Test pack (DEV-8 kill loop, DEV-9 state
-machine): right answers type the key, wrong ones a value no key has.
+machine): right answers type the key, wrong ones a value no key has. Wave 2: a problem is
+retried until right or given up (only its first try counts), and there are no hints.
 
 `key_checker` grades plain kinds (choice, true/false, text) with the real checker in this
 process and math kinds by comparing with the key as typed. These tests are about saved
@@ -31,7 +32,10 @@ STATE_TABLES = (  # what an answer changes and undo restores (core/storage/rows.
 )
 LOG_TABLES = ("attempt", "review_log", "implicit_credit")
 
-type How = Literal["right", "wrong", "unsure", "give-up", "hint"]
+# right; wrong (a wrong first try, then right); unsure; give-up (before any answer);
+# wrong-give-up (a wrong first try, then give up)
+type How = Literal["right", "wrong", "unsure", "give-up", "wrong-give-up"]
+COURSE = "Test Course"  # the Test pack's one course, set up for the planner
 
 
 def key_checker(raw: str, spec: AnswerSpec, source: Any) -> GradeResult:
@@ -45,6 +49,8 @@ def typed(card: Card, right: bool) -> list[dict[str, Any]]:
     def key(answer_type: str, answer: str | None, choices: tuple[Any, ...]) -> str:
         text = answer or ""
         value = text.split(";")[0].strip() if answer_type == "text" else text
+        if right and answer_type == "choice" and not text:  # the right options' letters
+            return ", ".join("abcdefgh"[i] for i, c in enumerate(choices) if c.correct)
         if right:
             return value
         if answer_type == "choice":  # a wrong choice: the first one that is not correct
@@ -69,24 +75,24 @@ def answer(svc: StudyService, storage: Storage, turn: Turn, how: How) -> Attempt
     if p.kind == "example":
         return None
     if p.kind == "flashcard":
-        rating = {"right": 3, "unsure": 2, "hint": 3}.get(how, 1)
+        rating = {"right": 3, "unsure": 2}.get(how, 1)
         return svc.rate_flashcard(rating, timing=timing)
     card = storage.packs.card(p.card.id)
     assert card is not None
     if how == "give-up":
         return svc.give_up(timing)
-    if how == "hint" and card.hints:
-        svc.hint()
-    right = how != "wrong"
+    right = how in ("right", "unsure")
     confidence = "unsure" if how == "unsure" else "sure"
     grade = "matched" if right else "missed"
     if p.card.self_graded:
         svc.show_solution()
         return svc.submit({"self_grade": grade, "timing": timing})
     result = svc.submit({"answers": typed(card, right), "confidence": confidence, "timing": timing})
-    for _ in range(p.attempts_allowed + 1):
-        if result.outcome == "retry":
-            result = svc.submit({"answers": typed(card, right), "timing": timing})
+    for _ in range(4):
+        if result.outcome == "retry" and how == "wrong-give-up":
+            result = svc.give_up(timing)
+        elif result.outcome == "retry":  # right on the next try
+            result = svc.submit({"answers": typed(card, True), "timing": timing})
         elif result.outcome == "self-grade":
             result = svc.submit({"self_grade": grade, "timing": timing})
         elif result.outcome == "invalid":

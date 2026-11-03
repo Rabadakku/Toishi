@@ -42,9 +42,7 @@ def study_some(api: Api, answers: int = 4) -> None:
                 if done % 2:
                     typed = [{**a, "value": "987654321"} for a in typed]
                 result = api.study_submit({"item_key": key, "answers": typed})
-                while result["outcome"] == "retry":
-                    result = api.study_submit({"item_key": key, "answers": typed})
-                if result["outcome"] in ("invalid", "self-grade"):
+                if result["outcome"] in ("retry", "invalid", "self-grade"):  # wrong: give up
                     api.study_give_up({"item_key": key, "timing": {"active_ms": 1000}})
             done += 1
         turn = api.study_next({"item_key": key})

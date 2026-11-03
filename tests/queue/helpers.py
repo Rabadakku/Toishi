@@ -1,11 +1,13 @@
-"""A small course world for queue tests: courses, sections, skills, cards, a fake checker."""
+"""A small course world for queue tests: courses, sections, skills, cards, a fake checker,
+and `Script`, a stand-in for the planner that serves chosen problems."""
 
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from core import grader
@@ -13,13 +15,17 @@ from core.grader import AnswerSpec, Status
 from core.model import (
     Card,
     Course,
+    CourseSetup,
     PackInfo,
     Section,
     Skill,
     SkillState,
     SolutionStep,
     Unit,
+    WrongAnswer,
 )
+from core.plan.types import ServedItem, WorkItem
+from core.practice import PlannedItem, PracticePlan
 from core.queue import StudyService
 from core.queue.guards import TimingReport
 from core.storage import Storage, build_pack
@@ -30,15 +36,23 @@ NY = ZoneInfo("America/New_York")
 START = datetime(2026, 9, 1, 12, tzinfo=NY)
 
 
+FEEDBACK = "Check the sign of the second term."  # every problem's known wrong answer "7"
+
+
 def fake_checker(raw: str, spec: AnswerSpec, source: Any) -> grader.GradeResult:
-    """'?' is a syntax error, '!' undecidable, the key's text is correct, else incorrect."""
+    """'?' is a syntax error, '!' undecidable, the key's text is correct, a known wrong
+    answer is matched (its feedback in the message, like the real grader), else incorrect."""
     text = raw.strip()
     if text == "?":
         return grader.GradeResult(Status.INVALID, None, "syntax error")
     if text == "!":
         return grader.GradeResult(Status.UNDECIDABLE, text, "too slow")
-    status = Status.CORRECT if text == spec.answer.strip() else Status.INCORRECT
-    return grader.GradeResult(status, text)
+    if text == spec.answer.strip():
+        return grader.GradeResult(Status.CORRECT, text)
+    known = next((w for w in spec.wrong if w.answer == text), None)
+    if known is not None:
+        return grader.GradeResult(Status.INCORRECT, text, known.feedback or "", matched_wrong=known)
+    return grader.GradeResult(Status.INCORRECT, text)
 
 
 def fake_preview(raw: str, spec: AnswerSpec, source: Any) -> grader.Preview:
@@ -148,6 +162,7 @@ def world_records(
                                 answer="1",
                                 question_md="Solve.",
                                 hints=tuple(f"hint {h + 1}" for h in range(hints)),
+                                wrong=(WrongAnswer(answer="7", feedback=FEEDBACK, step=2),),
                                 solution=(
                                     SolutionStep(number=1, skill_id=step_one, label="Set up"),
                                     SolutionStep(number=2, skill_id=sid, label="Finish"),
@@ -163,8 +178,12 @@ def make_world(
     *,
     state: str = "learning",
     settings: dict[str, Any] | None = None,
+    setup: bool = True,
     **kw: Any,
 ) -> World:
+    """`setup`: each course set up for the planner, starting today (wave 2: a course without
+    a setup has no schedule, so nothing of it is planned). The packs have no pace data, so a
+    set-up course introduces every skill on its start day."""
     records, skills, sections = world_records(courses, **kw)
     pack = tmp_path / "pack.db"
     build_pack(pack, PackInfo(id="pk", title="Pack", version="1"), records)  # type: ignore[arg-type]
@@ -177,6 +196,9 @@ def make_world(
         users.set_setting(key, value)
     for section in sections:
         users.set_section_state(section, state)  # type: ignore[arg-type]
+    if setup:
+        for course in courses:
+            users.set_course_setup(CourseSetup(course_id=course, start=START.date()))
     return World(storage, clock, skills, list(courses), sections, paths, [pack])
 
 
@@ -252,3 +274,89 @@ def learning_state(skill: str, now: int, *, streak: int = 1, count: int = 2) -> 
         learning_count=count,
         level_evidence={"phase": [[3, now - DAY]], "example_due": False},
     )
+
+
+# ---------------------------------------------------------------- a scripted planner
+
+
+@dataclass(frozen=True, slots=True)
+class Work(WorkItem):
+    """A planner item with the wave 2 planner's fields (ladder, sitting, time_limit), whether or
+    not the core.plan under test has them yet."""
+
+    ladder: int = 0
+    sitting: str | None = None
+    time_limit: float | None = None
+
+
+def _key(item: WorkItem) -> str:
+    return item.problem.problem_id if item.problem is not None else str(item.example_card)
+
+
+class Script:
+    """Stands in for the planner (`PracticeEngine.plan_day`) so a test chooses what is served:
+    its items in order, each once a study day (an item the log shows served today is left
+    out, the way a re-plan leaves it out). `set_aside`, `notes`, `behind`: what the day's plan
+    says. `calls` counts the plans asked for."""
+
+    def __init__(self, svc: StudyService, course: str = "ca") -> None:
+        self.svc = svc
+        self.course = course
+        self.items: list[WorkItem] = []
+        self.set_aside: tuple[str, ...] = ()
+        self.notes: tuple[str, ...] = ()
+        self.behind: tuple[str, ...] = ()
+        self.calls = 0
+        svc.practice.plan_day = self  # type: ignore[method-assign]
+
+    def problem(self, card_id: str, role: str = "growth", **kw: Any) -> WorkItem:
+        """Plan `card_id` (or a part, "card#a") next."""
+        catalog = self.svc.practice.catalog()
+        spec = catalog.problems.get(card_id) or catalog.by_card[card_id][0]
+        item = Work(
+            skill_id=kw.pop("skill_id", spec.main_skill),
+            role=role,  # type: ignore[arg-type]
+            problem=spec,
+            example_card=None,
+            expected_minutes=spec.standard_minutes,
+            priority=kw.pop("priority", 1),
+            tier=spec.tier,
+            p=kw.pop("p", 0.8),
+            reason=kw.pop("reason", "band"),
+            **kw,
+        )
+        self.items.append(item)
+        return item
+
+    def example(self, skill: str, card_id: str | None = None) -> WorkItem:
+        item = Work(
+            skill_id=skill,
+            role="new",
+            problem=None,
+            example_card=card_id or f"{skill}.ex",
+            expected_minutes=2.0,
+            priority=0,
+            block=True,
+            reason="example",
+        )
+        self.items.append(item)
+        return item
+
+    def __call__(
+        self, day: date, now_ms: int, served: Sequence[tuple[str, ServedItem]] = ()
+    ) -> PracticePlan:
+        self.calls += 1
+        done = {_key(s.item) for _, s in served}
+        left = tuple(PlannedItem(self.course, it) for it in self.items if _key(it) not in done)
+        plan = SimpleNamespace(
+            behind=self.behind, set_aside=self.set_aside, sittings=(), notes=self.notes
+        )
+        return PracticePlan(
+            day=day,
+            items=left,
+            plans={self.course: cast(Any, plan)},
+            minutes=sum(p.item.expected_minutes for p in left),
+            hours_to_keep_pace=None,
+            hours_basis="none",
+            standard_hours=None,
+        )

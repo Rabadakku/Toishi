@@ -1,21 +1,20 @@
-"""Daily queue and study sessions (milestone M5): what the student does each day, in what
-order, and every study session. docs/spec.md "The daily queue"; ADR-0009, and ADR-0010
-(every card kind, practice tests).
+"""Daily queue and study sessions: what the student does each day, in what order, and every
+study session. docs/spec.md "The daily queue"; ADR-0009, ADR-0010 (every card kind, practice
+tests); wave 2: docs/design/wave2-integration.md section 4 (problems planned by core.practice).
 
-Public API (what the bridge calls), `StudyService(storage, hooks=(), checker=None)`:
+Public API (what the bridge calls), `StudyService(storage, checker=None, previewer=None)`:
 
 Home and plans
-- today() -> TodayView            today's problems and minutes per course, exams, proposals
+- today() -> TodayView            today's items and minutes by course and role, hours to keep
+                                  pace, skills behind or set aside, sittings, the planner's notes
 - forecast(day=None) -> Forecast  tomorrow's (or a day's) problems and minutes
 - plan_preview(day=None) -> Plan  the plan start() would build (stats, tests)
-- set_vacation(start, end) / clear_vacation()                       QUE-9
 
 Sessions (each returns a Turn: a problem, a summary or nothing to do)
-- start(StartRequest | dict) -> Turn   daily | lighter | focused | extra | practice-test;
-                                       resumes today's open session (QUE-16)
+- start(StartRequest | dict) -> Turn   daily | extra | practice-test; resumes today's open
+                                       session (QUE-16)
 - resume() -> Turn | None; current() -> Turn
-- next() -> Turn                       continue: grade the answer on screen, serve the next
-- set_lighter(on=True) -> Turn         QUE-10 mid-session
+- next() -> Turn                       continue: commit the answer on screen, serve the next
 - undo() -> Turn                       QUE-15 (refused with a message when not exact)
 - end() -> Summary                     summary and tomorrow's forecast (practice tests graded)
 
@@ -23,21 +22,21 @@ Answering the problem on screen
 - read_answer(raw, part=, source=) -> grader.Preview    "We read your answer as ..."
 - submit(SubmitRequest | dict) -> AttemptResult        retry | correct | incorrect |
                                                         invalid | self-grade | recorded
-  Multi-part problems: answers labeled by part, each part with its own verdict and tries
-  (PartVerdictView.final / tries_used); a part already final is not checked again.
-  Find-the-error: also `error_step` and `reason` (AttemptResult.find_error says which
-  of step, reason and value were right). Which-method items: one try, a choice.
-- show_solution() -> AttemptResult     self-graded problems: the solution and rubric; then
-                                       submit rubric_ticked or self_grade
-- give_up(timing) -> AttemptResult; hint() -> HintReveal; open_example()
-- diagnose(choice, step=None) -> Diagnosis  "What went wrong?" (grades with the choice)
+  A wrong try is "retry": the verdict alone ("Not quite"), `can_retry`, and
+  `first_try_counted` (it was the problem's first try, the one that counts). Multi-part
+  problems: answers labeled by part, each part with its own verdict and tries
+  (PartVerdictView.final / tries_used); a part already right is not checked again.
+- show_solution() -> AttemptResult     self-graded problems: the solution and rubric, then
+                                       submit rubric_ticked or self_grade; any other problem:
+                                       after a wrong first try, ending it like give_up
+- give_up(timing) -> AttemptResult     the full solution; open_example()
 - flag(kind, note=None) -> FlagResult  too_easy | dispute | report | flag | suspend
 - rate_flashcard(rating=None, answer=None) -> AttemptResult
 - tick(active_ms, draft=None) -> Tick  saves active time and draft; break reminder
 
-Pure pieces (no storage): share.split (QUE-11 quotas), triage.candidates and POLICIES
-(QUE-6), order.order_items (session ordering), planner.build_plan / rebalance,
-guards.guard_timing (TIME-4/5), estimate.TimeTable (QUE-3), daylog (QUE-8/9/12/13).
+Pure pieces (no storage): deck.flashcards (the day's flashcards), planner.place_flashcards,
+guards.guard_timing (TIME-4/5). The pieces of the earlier problem engine (share, triage,
+order, planner.build_plan, snapshot, estimate, daylog) go with wave 2's removals.
 Requests and responses are dataclasses in `views`; `to_dict` makes JSON-ready dicts.
 """
 
@@ -53,22 +52,21 @@ from core.queue.triage import POLICIES, TriagePolicy, candidates
 from core.queue.views import (
     AttemptResult,
     CourseLine,
-    Diagnosis,
     ExamLine,
     FindErrorView,
     FlagResult,
     Forecast,
-    HintReveal,
     PartAnswer,
     ProblemView,
     Progress,
-    Proposal,
     Reason,
+    SittingView,
     SolutionView,
     StartRequest,
     SubmitRequest,
     Summary,
     TestResult,
+    TextbookView,
     Tick,
     TodayView,
     Turn,
@@ -81,25 +79,23 @@ __all__ = [
     "CourseDemand",
     "CourseLine",
     "DayEntry",
-    "Diagnosis",
     "ExamLine",
     "FindErrorView",
     "FlagResult",
     "Forecast",
     "Guarded",
-    "HintReveal",
     "Mode",
     "PartAnswer",
     "Plan",
     "PlanItem",
     "ProblemView",
     "Progress",
-    "Proposal",
     "QueueError",
     "QueueSettings",
     "Reason",
     "ReasonTag",
     "Share",
+    "SittingView",
     "Snapshot",
     "SolutionView",
     "StartRequest",
@@ -107,6 +103,7 @@ __all__ = [
     "SubmitRequest",
     "Summary",
     "TestResult",
+    "TextbookView",
     "Tick",
     "TimingReport",
     "TodayView",

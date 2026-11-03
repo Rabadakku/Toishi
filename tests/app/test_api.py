@@ -86,8 +86,8 @@ def test_requests_are_checked_never_trusted(studying: Api) -> None:
         studying.study_submit({"item_key": key, "answers": "x"})
     with pytest.raises(ValueError, match="longer"):
         studying.study_submit({"item_key": key, "answers": [{"value": "1" * 5000}]})
-    with pytest.raises(ValueError, match="choice"):
-        studying.study_diagnose({"item_key": key, "choice": "blame the teacher"})
+    with pytest.raises(ValueError, match="mode"):
+        studying.study_start({"mode": "lighter"})  # the old engine's modes are gone
     with pytest.raises(TypeError):
         studying.study_tick({"item_key": key, "active_ms": True})
 
@@ -98,7 +98,7 @@ def test_a_stale_page_cannot_act_on_another_item(studying: Api) -> None:
     with pytest.raises(UserMessage, match="no longer on screen"):
         studying.study_next({"item_key": key + "-old"})
     with pytest.raises(UserMessage, match="no longer on screen"):
-        studying.study_hint({"item_key": "nope"})
+        studying.study_give_up({"item_key": "nope"})
     assert studying.study_current()["problem"]["item_key"] == key
 
 
@@ -111,8 +111,8 @@ def test_queue_refusals_become_user_messages(studying: Api) -> None:
         if turn["problem"]["kind"] == "flashcard":
             studying.study_rate_flashcard({"item_key": key, "rating": 3})
         turn = studying.study_next({"item_key": key})
-    with pytest.raises(UserMessage):
-        studying.study_diagnose({"choice": "cant-tell"})  # nothing missed yet
+    with pytest.raises(UserMessage, match="Try it first"):
+        studying.study_show_solution({})  # no wrong first try yet
     resumed = studying.study_resume()
     assert resumed is not None
     assert resumed["problem"]["item_key"] == turn["problem"]["item_key"]

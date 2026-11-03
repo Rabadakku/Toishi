@@ -50,8 +50,7 @@ MAX_DRAFT_CHARS = 20_000
 MAX_NOTE_CHARS = 2_000
 MAX_ID_CHARS = 400
 
-MODES = ("daily", "lighter", "focused", "practice-test", "extra")
-CHOICES = ("step", "setup", "slip", "misread", "other-method", "cant-tell")
+MODES = ("daily", "extra", "practice-test")
 FLAGS = ("too_easy", "dispute", "report", "flag", "suspend")
 SELF_GRADES = ("matched", "minor-slip", "missed")
 SOURCES = ("text", "mathlive")
@@ -491,7 +490,8 @@ class Api:
 
     @_serial
     def study_today(self) -> Json:
-        """Home: today's problems and minutes per course, exams. Never an overdue count."""
+        """Home: today's items and minutes by course and role, hours to keep pace, skills
+        behind or set aside, sittings and the planner's notes. Never an overdue count."""
         return to_dict(self._study().today())
 
     @_serial
@@ -500,15 +500,12 @@ class Api:
 
     @_serial
     def study_start(self, request: object = None) -> Json:
-        """Start a session (daily, lighter, focused, extra, practice-test) or resume today's."""
+        """Start a session (daily, extra, practice-test) or resume today's."""
         data = _obj(request)
         clean: Json = {"mode": _one_of(data.get("mode", "daily"), "mode", MODES)}
         if data.get("untimed") is not None:
             clean["untimed"] = _bool(data["untimed"], "untimed")
         clean["count"] = _opt_int(data.get("count"), "count", 1, 200)
-        clean["section_id"] = _opt_str(data.get("section_id"), "section_id")
-        clean["skill_id"] = _opt_str(data.get("skill_id"), "skill_id")
-        clean["weak_spots"] = _bool(data.get("weak_spots", False), "weak_spots")
         clean["exam_id"] = _opt_int(data.get("exam_id"), "exam_id", 0, 2**53)
         clean["timed"] = _bool(data.get("timed", False), "timed")
         return to_dict(self._study().start(clean))
@@ -538,8 +535,9 @@ class Api:
 
     @_serial
     def study_submit(self, request: object) -> Json:
-        """Grade the answer on screen. A non-final miss is committed at once; a final answer
-        is saved in the session and graded on continue (ADR-0009)."""
+        """Grade the answer on screen. A wrong try is committed at once and answered with the
+        verdict alone (retry); a final answer is saved in the session and committed on
+        continue (ADR-0009)."""
         data = _obj(request)
         clean: Json = {
             "item_key": _opt_str(data.get("item_key"), "item_key"),
@@ -557,7 +555,8 @@ class Api:
 
     @_serial
     def study_show_solution(self, request: object = None) -> Json:
-        """Self-graded problems: show the solution (and rubric) before grading."""
+        """Self-graded problems: show the solution (and rubric) before grading. Any other
+        problem: after a wrong first try, the solution, ending the problem like Give up."""
         self._guard(_obj(request).get("item_key"))
         return to_dict(self._study().show_solution())
 
@@ -566,11 +565,6 @@ class Api:
         data = _obj(request)
         self._guard(data.get("item_key"))
         return to_dict(self._study().give_up(_timing(data.get("timing"))))
-
-    @_serial
-    def study_hint(self, request: object = None) -> Json:
-        self._guard(_obj(request).get("item_key"))
-        return to_dict(self._study().hint())
 
     @_serial
     def study_tick(self, request: object) -> Json:
@@ -585,17 +579,8 @@ class Api:
         )
 
     @_serial
-    def study_diagnose(self, request: object) -> Json:
-        """The "What went wrong?" pick: a step (0 is set-up) or another option."""
-        data = _obj(request)
-        self._guard(data.get("item_key"))
-        choice = _one_of(data.get("choice"), "choice", CHOICES)
-        step = _opt_int(data.get("step"), "step", 0, 1000)
-        return to_dict(self._study().diagnose(choice, step))
-
-    @_serial
     def study_next(self, request: object = None) -> Json:
-        """Continue: grade the answer on screen if it isn't yet, then the next item."""
+        """Continue: commit the answer on screen if it isn't yet, then the next item."""
         self._guard(_obj(request).get("item_key"))
         return to_dict(self._study().next())
 
@@ -611,11 +596,6 @@ class Api:
     def study_undo(self) -> Json:
         """QUE-15: undo the last answer; the same problem comes back unanswered."""
         return to_dict(self._study().undo())
-
-    @_serial
-    def study_set_lighter(self, request: object) -> Json:
-        """QUE-10: a Lighter set for the rest of today's session (or back to normal)."""
-        return to_dict(self._study().set_lighter(_bool(_obj(request).get("on", True), "on")))
 
     @_serial
     def study_rate_flashcard(self, request: object) -> Json:

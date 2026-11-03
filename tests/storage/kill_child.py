@@ -12,7 +12,8 @@ process it started) and writes, with single atomic writes to stdout:
 and this process writes `forked <pid>` and, once the worker is dead, `exit <pid> <status>`.
 
 Jobs: {"job": "study", "root", "pack", "seed", "start_ms"} answers problems through the
-real StudyService (right, wrong, unsure, after a hint, give up, continue, undo, end);
+real StudyService (right, wrong then right, unsure, give up, wrong then give up, continue,
+undo, end);
 {"job": "import", "root", "seed", "start_ms", "decks"} backs up and imports Anki fixture
 decks (read, plan, apply, the engine hook) one after another; {"job": "migrate", "root",
 "start_ms"} opens a schema-v1 profile, which backs it up and migrates it.
@@ -41,7 +42,16 @@ from core.storage.profiles import ProfilePaths
 from tests.storage.study_driver import How, answer, key_checker
 
 NY = ZoneInfo("America/New_York")
-HOWS: list[How] = ["right", "right", "right", "wrong", "wrong", "unsure", "hint", "give-up"]
+HOWS: list[How] = [
+    "right",
+    "right",
+    "right",
+    "wrong",
+    "wrong",
+    "unsure",
+    "give-up",
+    "wrong-give-up",
+]
 
 
 def say(kind: str, payload: dict[str, Any]) -> None:

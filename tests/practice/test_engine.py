@@ -251,18 +251,20 @@ def test_calibration_bins_every_first_try(world: World) -> None:
     answer(world, "c.limit.t3.v0")
     answer(world, "alg.factor.t2.v0")
     cal = engine.calibration()
-    assert [b.label for b in cal.by_tier] == ["1", "2", "3", "4", "5"]
+    # The labels reach the Model page as they are: plain words
+    assert [b.label for b in cal.by_tier] == ["Tier 1", "Tier 2", "Tier 3", "Tier 4", "Tier 5"]
     assert [b.n for b in cal.by_tier] == [2, 1, 1, 0, 0]
     assert [b.label for b in cal.by_gap] == [
-        "first",
-        "under 1 day",
-        "1-7 days",
-        "8-30 days",
-        "over 30 days",
+        "First practice",
+        "Under a day",
+        "1 to 7 days",
+        "8 to 30 days",
+        "Over 30 days",
     ]
     assert [b.n for b in cal.by_gap] == [2, 1, 1, 0, 0]
     # c.limit's problems also use alg.factor, a background component; the factoring problem
     # has no course component at all and counts as one
+    assert [b.label for b in cal.by_components] == ["1 skill", "2 skills", "3 or more skills"]
     assert [b.n for b in cal.by_components] == [4, 0, 0]
     tier1 = cal.by_tier[0]
     assert tier1.observed == 0.5

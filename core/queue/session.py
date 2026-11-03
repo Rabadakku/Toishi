@@ -1,99 +1,70 @@
-"""The study session service: start or resume, serve, grade, re-plan, undo, summarize.
+"""The study session service (wave 2): start or resume, serve, grade, re-plan, undo, summarize.
 
-`StudyService(storage)` is what the bridge calls. It keeps no state of its own: every
-call reads the open session row (QUE-16), acts, and saves the row again, so a quit, crash
-or restart resumes at the same problem with its active time, typed draft, tries, hints and
-any verdict not yet continued from. A lock serializes calls (bridge methods run on worker
-threads, AGENTS rule 6).
+`StudyService(storage)` is what the bridge calls. It keeps no state of its own: every call
+reads the open session row (QUE-16), acts, and saves the row again, so a quit, crash or
+restart resumes at the same problem with its active time, typed draft, tries and any answer
+not yet continued from. A lock serializes calls (bridge methods run on worker threads,
+AGENTS rule 6).
 
-Grading flow for a problem:
+Problems are planned by core.practice: the student model and the planner (design v1.2,
+docs/design/wave2-integration.md section 4).
 
-1. `submit` checks the answer (core.grader). A syntax or shape error is not an attempt. A
-   wrong non-final attempt is logged at once (Engine.record_try) and the page shows "Not
-   quite". A final answer (correct, or wrong after the last attempt, or Give up) is saved
-   in the session row with its verdict and shown with the full solution.
-2. The rating needs what the student does on that screen: "too easy" (E) after a correct
-   answer, or the "What went wrong?" choice after a miss. `diagnose` and `next` grade the
-   saved answer through Engine.grade, committing the attempt, its FSRS event and the
-   session in one transaction (rule 5). A saved answer is never lost: resuming shows the
-   same verdict screen, and a session left open past the study-day rollover is graded
-   with its original time before a new plan is built.
-3. The re-plan reads what the answer changed: a lapse adds a reinforcement problem at
-   least 5 items later (a stretch problem's owed core-band review waits for the next
-   study day, ADR-0014); checks made by the diagnosis flow (PendingCheck rows) land at
-   least `after_items` (3) later; a learning block grows or ends with the learning phase;
-   a flashcard on the missed skill follows at once. Each takes the slot of the
-   lowest-priority pending item.
+1. **Planning.** A daily session takes its problems from `PracticeEngine.plan_day` over the
+   set-up courses; flashcards and cloze blanks go between them in groups of up to five (FSRS
+   per card, unchanged). After every answer the rest of the day is planned again from the
+   items served today, which the engine reads back from the log, so a second session of the
+   day goes on where the first stopped.
+2. **Answering.** A problem can be retried any number of times; only its first try counts.
+   A wrong try is logged at once (a non-final attempt) and answered with "Not quite" alone:
+   no checker message, no known-wrong-answer feedback, no step. The problem ends when the
+   answer is right or the student gives up (or, after a wrong first try, asks for the
+   solution); the full solution then shows, with the matched feedback. There are no hints and
+   no "What went wrong?".
+3. **Committing.** A final answer is held in the session row and committed on continue (or
+   at the end, or, at its own time, when the study day rolls over) in one transaction with the
+   session row (rule 5): the attempt row with what the planner chose (role, milestone,
+   prediction, ladder rung, sitting, parameter version) and its valid solving minutes.
+   Problems write no state rows; the learner state is a function of the log, and the engine
+   picks up each committed row (`PracticeEngine.record`).
+4. **Undo** voids the last answer's attempt rows and restores the plan as it was before it;
+   the learner replays the shorter log.
 
-Card kinds (ADR-0010): a multi-part problem keeps a verdict and tries per part in the
-session row and is final when every part is; a find-the-error item can stand in for a
-skill's review problem once the diagnosis flow unlocks it; a method-choice skill's items are
-which-method items outside the problem count; cloze cards come one blank number at a time;
-self-graded problems show their solution (and rubric) before the student grades them.
+Other modes: a practice test (exam-tier problems over an exam's scope, graded at the end)
+and extra practice (tomorrow's planned problems, done now). Card kinds (ADR-0010): multi-part
+problems keep a verdict and tries per part and are final when every part is; self-graded
+problems show their solution (and rubric) before the student grades them; cloze cards come
+one blank number at a time.
 """
 
-import hashlib
 import math
 import threading
 import uuid
+from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any, Literal, cast
 
-from core.engine import (
-    AnswerFacts,
-    Catalog,
-    Engine,
-    FsrsAdapter,
-    GradeHook,
-    GradeResult,
-    PartOutcome,
-    ProblemOutcome,
-    SkillContext,
-    TimingFacts,
-    card_facts,
-    due_day,
-    learning_step,
-    memory_of,
-    practice_tests_open,
-    record_try,
-    scheduled_load,
-    skill_retention,
-)
-from core.engine.config import SEEN_SKIP_DAYS
-from core.engine.diagnosis import (
-    Diagnosis,
-    DiagnosisHook,
-    DiagnosisSettings,
-    StorageWorld,
-    find_error_highlighted,
-    find_error_slot_open,
-    find_error_unlocked,
-    grade_find_error,
-    queue_order,
-)
-from core.engine.grading import Effects, Purpose, record_unrated
-from core.engine.schedule import SPREAD_DAYS, GoalChange, goal_change
+from core.engine import Engine, PartOutcome, TimingFacts, speed_time_ms
+from core.engine.config import BASELINE_LONG_PAUSE_MS
 from core.engine.service import FitReport
+from core.engine.timing import cap_ms, excluded_from_baseline
 from core.grader import Status
+from core.learner.types import ProblemSpec
 from core.model import (
-    THIS_ATTEMPT,
     Attempt,
     Card,
     CardMark,
-    CardRef,
-    CourseGoal,
     Dispute,
-    ErrorChoice,
+    Exam,
     GradedAnswer,
-    PendingCheck,
     Report,
     SessionState,
-    SkillState,
     VoidReason,
 )
+from core.practice import Catalog, PlannedItem, PracticeEngine, PracticePlan
+from core.practice.words import plain_note, set_aside_line
 from core.queue import cloze
 from core.queue import views as v
 from core.queue.answers import (
@@ -106,49 +77,31 @@ from core.queue.answers import (
 )
 from core.queue.config import (
     CHECK,
-    CHECK_GAP,
     DAY_MS,
-    DEFAULT_TEST_MINUTES_PER_PROBLEM,
-    DIAGNOSIS_DAY_KEY,
-    EXAMPLE_MS,
     EXTRA_DEFAULT,
+    FLASHCARD,
+    FLASHCARD_MS,
     FLASHCARD_RESHOW_GAP,
-    FOCUSED_DEFAULT,
     LEARNING,
     MINUTE_MS,
-    NEW,
     PRACTICE_TEST_DEFAULT,
-    RELEARN,
     REVIEW,
-    TEST_RECALL_FLOOR,
-    TEST_UNANSWERED_DEFAULT,
-    TEST_UNANSWERED_KEY,
 )
-from core.queue.daylog import (
-    DayEntry,
-    Vacation,
-    backlog_stuck,
-    overloaded,
-    read_log,
-    write_entry,
-    write_vacation,
-)
-from core.queue.estimate import TimeTable
+from core.queue.deck import flashcards as day_flashcards
 from core.queue.flashcards import FLASHCARD_REWRITE, grade_flashcard
 from core.queue.guards import TimingReport, guard_timing
-from core.queue.items import TAG_LABELS, Plan, PlanItem, Unit, why
-from core.queue.order import order_items
-from core.queue.planner import (
-    build_plan,
-    confusable_map,
-    flashcard_item,
-    projected_minutes,
-    rebalance,
-)
-from core.queue.snapshot import DAILY_MODES, QueueSettings, Snapshot, gather
-from core.queue.triage import ItemBuilder as TriageBuilder
-from core.queue.triage import learning_block, policy_for
+from core.queue.items import LADDER_REASONS, ROLE_REASONS, TAG_LABELS, Mode, Plan, PlanItem, why
+from core.queue.planner import place_flashcards
 from core.storage import NothingToUndoError, Storage, StorageError, UndoConflictError
+
+ENGINE = 2  # plan.info["engine"]: planned by core.practice (wave 2)
+DAILY: Mode = "daily"
+MODES: tuple[Mode, ...] = ("daily", "extra", "practice-test")
+PRACTICE_TEST_WINDOW_DAYS = 21  # practice tests open 21 days before an exam (ENG-8)
+PRACTICE_TEST_TIER = 3  # a standard exam problem (design 2.2)
+PRACTICE_TEST_FRESH_DAYS = 7  # problems not served in the last 7 days
+NO_LIMIT = 0  # attempts_allowed: problems are retried freely
+UNDO_AFTER_SOLUTION = "undo_after_solution"  # ADR-0019 item 7: brought back after its solution
 
 
 class QueueError(Exception):
@@ -159,46 +112,28 @@ def _uid() -> str:
     return uuid.uuid4().hex
 
 
-def _goal(goal: CourseGoal | Mapping[str, Any]) -> CourseGoal:
-    if isinstance(goal, CourseGoal):
-        return goal
-
-    def day(key: str) -> date | None:
-        raw = goal.get(key)
-        return None if raw is None else date.fromisoformat(str(raw))
-
-    return CourseGoal(
-        course_id=str(goal["course_id"]),
-        goal=goal.get("goal", "A"),
-        custom_retention=goal.get("custom_retention"),
-        goal_date=day("goal_date"),
-        starts_on=day("starts_on"),
-    )
-
-
 class StudyService:
     def __init__(
         self,
         storage: Storage,
         *,
-        hooks: Sequence[GradeHook] = (),
         checker: Checker | None = None,
         previewer: Previewer | None = None,
-        diagnosis: bool = True,
         app_version: str | None = None,
     ) -> None:
         self._storage = storage
-        self._hooks = tuple(hooks)
         self._checker = checker or default_checker
         self._previewer = previewer or default_previewer
-        self._diagnosis = diagnosis
         self._app_version = app_version
         self._lock = threading.RLock()
         self._cards: dict[str, Card] = {}
+        self._practice = PracticeEngine(storage)
         self._fitter: threading.Thread | None = None
         self._launched = False  # the launch repair ran (ADR-0019 item 8)
-        # The last background fit's reports, or the error that stopped it (I7).
+        self._resumed = False  # the open session was looked at since this launch
+        # The last background fit's reports (flashcard sets), or the error that stopped it.
         self.last_auto_fit: list[FitReport] | Exception | None = None
+        self.last_refit: object | Exception | None = None  # the last learner refit's outcome
 
     # ================================================================ wiring
 
@@ -206,51 +141,32 @@ class StudyService:
     def storage(self) -> Storage:
         return self._storage
 
-    def engine(self) -> Engine:
-        """A fresh engine per call (it builds the skill catalog once, see _CallEngine) whose
-        grading runs the error-diagnosis hook (ADR-0008), then any extra hooks."""
-        if not self._diagnosis:
-            return _CallEngine(self._storage, hooks=(*self._hooks, self._bookkeeping_hook))
-        base = Engine(self._storage)
-        holder: list[Engine] = []
-        hook = DiagnosisHook(
-            lambda: StorageWorld(self._storage, retention=holder[0].retention),
-            settings=base.settings(),
-            adapter=base.adapter(),
-            days=base.days(),
-            adapter_of=base.skill_adapters(),
-        )
-        engine = _CallEngine(self._storage, hooks=(hook, *self._hooks))
-        holder.append(engine)
-        return engine
+    @property
+    def practice(self) -> PracticeEngine:
+        return self._practice
 
-    def _daily_run(self, engine: Engine) -> None:
-        """Once per study day, before the day's plan: the diagnosis flow cancels stale
-        checks, runs the weak-spot finder and schedules diagnostic sets (ENG-15). First,
-        once per launch: attempts graded under a since-changed answer key are voided
-        (PACK-14), and memory is rebuilt for a fit an older build left half-applied."""
-        if not self._launched:
-            self._launched = True
-            launch = Engine(self._storage)
-            launch.void_changed_keys()  # PACK-14: a revised pack fixed an answer key
-            launch.repair_fit()
-        if not self._diagnosis:
+    def engine(self) -> Engine:
+        """The FSRS engine, for flashcards: their parameter sets, fits and the log repairs."""
+        return Engine(self._storage)
+
+    def _launch(self) -> None:
+        """Once per launch: attempts graded under a since-changed answer key are voided
+        (PACK-14), and flashcard memory is rebuilt for a fit an older build left half-applied."""
+        if self._launched:
             return
-        users = self._storage.users
-        today = self._today(engine).isoformat()
-        if users.get_setting(DIAGNOSIS_DAY_KEY, None) == today:
-            return
-        Diagnosis(self._storage).daily()
-        users.set_setting(DIAGNOSIS_DAY_KEY, today)
+        self._launched = True
+        engine = self.engine()
+        engine.void_changed_keys()
+        engine.repair_fit()
 
     def _now(self) -> int:
         return self._storage.db.clock.now_ms()
 
-    def _today(self, engine: Engine | None = None) -> date:
-        return (engine or self.engine()).days().day_of(self._now())
+    def _today(self) -> date:
+        return self._practice.days().day_of(self._now())
 
-    def _settings(self, day: date) -> QueueSettings:
-        return QueueSettings.from_values(self._storage.users.settings(), day)
+    def _setting(self, key: str, default: Any) -> Any:
+        return self._storage.users.get_setting(key, default)
 
     def _card(self, card_id: str) -> Card:
         """Cards are read-only while a pack is open (a pack update reopens storage)."""
@@ -262,21 +178,6 @@ class StudyService:
             self._cards[card_id] = card
         return card
 
-    def _ref(self, card: Card) -> CardRef:
-        return CardRef(
-            id=card.id,
-            rev=card.rev,
-            kind=card.kind,
-            skill_id=card.skill_id,
-            tier=card.tier,
-            template_id=card.template_id,
-            seed=card.seed,
-            status=card.status,
-            cue_required=card.cue_required,
-            has_cued_question=card.cued_question_md is not None,
-            source=self._storage.packs.card_source(card.id) or "user",
-        )
-
     @contextmanager
     def _locked(self) -> Iterator[None]:
         with self._lock:
@@ -285,79 +186,70 @@ class StudyService:
     # ================================================================ home and plans
 
     def today(self) -> v.TodayView:
-        """Home: today's problems and minutes per course, exams, proposals (QUE-3, 8, 13)."""
+        """Home: today's items and minutes, by course and by role; what keeping pace costs;
+        skills behind or set aside; sittings; the planner's notes. Never an overdue count."""
         with self._locked():
-            engine = self.engine()
-            open_session = self._open_session(engine)
-            if open_session is None:
-                self._daily_run(engine)
-            snap = gather(self._storage, engine)
-            if open_session is not None:
-                plan = Plan.from_json(open_session.plan)
-            else:
-                plan = build_plan(snap)
-                self._log_day(snap, plan)
+            self._launch()
+            open_session = self._open_session()
+            day = self._today()
+            plan = Plan.from_json(open_session.plan) if open_session is not None else None
+            if plan is None or plan.mode != DAILY:
+                plan = self._daily_plan(day)
             pending = [i for i in plan.items if i.pending]
-            log = read_log(self._storage.users)
-            proposals = []
-            if snap.vacation is None or not snap.vacation.covers(snap.day):
-                if overloaded(log, snap.day):
-                    proposals.append(
-                        v.Proposal(
-                            kind="overload",
-                            message="For three days your courses have needed more than your "
-                            "daily count. A higher count for a while, a lower goal or moving "
-                            "a course to Keep would bring it back in line.",
-                            options=("raise-count", "lower-goal", "move-to-keep"),
-                        )
-                    )
-                if backlog_stuck(log, snap.day):
-                    proposals.append(
-                        v.Proposal(
-                            kind="backlog",
-                            message="Reviews have been piling up for a week. A higher count, a "
-                            "short re-check, or spreading the load over the next week would "
-                            "clear it.",
-                            options=("raise-count", "re-check", "spread"),
-                        )
-                    )
+            summary: Mapping[str, Any] = plan.info.get("summary") or {}
+            problems = [i for i in pending if i.kind == "problem"]
+            done_today = (
+                open_session is None
+                and not problems
+                and bool(self._storage.users.attempts(since=self._practice.days().start(day)))
+            )
+            extra = not problems and bool(self._extra_items(day, EXTRA_DEFAULT))
+            deck = self._deck(day)
             return v.TodayView(
-                day=snap.day.isoformat(),
-                problems=sum(i.slots for i in pending),
-                minutes=projected_minutes(pending),
+                day=day.isoformat(),
+                problems=len(problems),
+                minutes=_minutes(pending),
                 flashcards=sum(1 for i in pending if i.kind == "flashcard"),
-                courses=self._course_lines(snap, pending),
-                exams=self._exam_lines(snap),
-                proposals=tuple(proposals),
+                courses=self._course_lines(pending),
+                exams=self._exam_lines(day),
                 session_open=open_session is not None,
-                done_today=open_session is None and not pending and bool(snap.done_today),
-                vacation=bool(plan.info.get("vacation")),
-                extra_practice_available=self._extra_available(engine),
-                flashcards_to_rewrite=snap.flashcard_leeches,
+                done_today=done_today,
+                extra_practice_available=extra,
+                flashcards_to_rewrite=deck.leeches,
+                by_role=dict(Counter(i.purpose for i in problems)),
+                hours_to_keep_pace=summary.get("hours_to_keep_pace"),
+                hours_basis=summary.get("hours_basis", "none"),
+                standard_hours=summary.get("standard_hours"),
+                behind=tuple(summary.get("behind", ())),
+                set_aside=tuple(summary.get("set_aside", ())),
+                sittings=tuple(
+                    v.SittingLine(id=str(s["id"]), skills=tuple(s["skills"]))
+                    for s in summary.get("sittings", ())
+                ),
+                notes=tuple(summary.get("notes", ())),
             )
 
     def forecast(self, day: date | None = None) -> v.Forecast:
-        """Tomorrow's plan (or any day's): problems and minutes, per course."""
+        """A later day's plan (tomorrow by default): problems and minutes, per course."""
         with self._locked():
-            engine = self.engine()
-            day = day or self._today(engine) + timedelta(days=1)
-            snap = gather(self._storage, engine, day=day)
-            plan = build_plan(snap)
-            pending = plan.pending
+            day = day or self._today() + timedelta(days=1)
+            items = self._problem_items(
+                self._practice.plan_day(day, self._practice.days().moment(day)),
+                Plan(day=day.isoformat()),
+            )[1]
             return v.Forecast(
                 day=day.isoformat(),
-                problems=sum(i.slots for i in pending),
-                minutes=projected_minutes(pending),
-                courses=self._course_lines(snap, pending),
+                problems=len(items),
+                minutes=_minutes(items),
+                courses=self._course_lines(items),
             )
 
     def plan_preview(self, day: date | None = None) -> Plan:
-        """The plan `start` would build for a day (tests, stats, debugging)."""
+        """The plan a daily start would build (tests, stats, debugging)."""
         with self._locked():
-            engine = self.engine()
-            return build_plan(gather(self._storage, engine, day=day))
+            return self._daily_plan(day or self._today())
 
-    def _course_lines(self, snap: Snapshot, items: Sequence[PlanItem]) -> tuple[v.CourseLine, ...]:
+    def _course_lines(self, items: Sequence[PlanItem]) -> tuple[v.CourseLine, ...]:
         lines: dict[str, list[PlanItem]] = {}
         for item in items:
             lines.setdefault(item.course_id or "", []).append(item)
@@ -366,17 +258,17 @@ class StudyService:
             v.CourseLine(
                 course_id=c,
                 title=titles.get(c, c),
-                problems=sum(i.slots for i in group),
-                minutes=projected_minutes(group),
+                problems=sum(1 for i in group if i.kind == "problem"),
+                minutes=_minutes(group),
             )
             for c, group in sorted(lines.items())
         )
 
-    def _exam_lines(self, snap: Snapshot) -> tuple[v.ExamLine, ...]:
+    def _exam_lines(self, day: date) -> tuple[v.ExamLine, ...]:
+        days = self._practice.days()
         out = []
         for exam in sorted(self._storage.users.exams(), key=lambda e: e.at):
-            exam_day = snap.days.day_of(exam.at)
-            left = (exam_day - snap.day).days
+            left = (days.day_of(exam.at) - day).days
             if left < 0:
                 continue
             out.append(
@@ -385,148 +277,191 @@ class StudyService:
                     name=exam.name,
                     course_id=exam.course_id,
                     days_left=left,
-                    practice_test=practice_tests_open(exam_day, snap.day),
+                    practice_test=left <= PRACTICE_TEST_WINDOW_DAYS,
                 )
             )
         return tuple(out)
 
-    def _log_day(self, snap: Snapshot, plan: Plan) -> None:
-        """Record what today's fresh plan asked for (carry-over, QUE-8, QUE-13)."""
-        if plan.mode not in DAILY_MODES or plan.info.get("vacation"):
-            return
-        if plan.info.get("done_before", 0) and snap.day in snap.log:
-            return  # a restart later in the day plans the rest; keep the day's real quotas
-        write_entry(
-            self._storage.users,
-            snap.day,
-            DayEntry(
-                n=int(plan.info.get("count", snap.settings.n)),
-                need=int(plan.info.get("need", 0)),
-                backlog=int(plan.info.get("backlog", 0)),
-                quotas=dict(plan.quotas),
-            ),
+    # ================================================================ building plans
+
+    def _daily_plan(self, day: date) -> Plan:
+        """Today's plan: everything the planner has left for today (the items served so far
+        today come from the log), with the day's flashcards placed between the problems."""
+        practice = self._practice
+        planned = practice.plan_day(day, self._now(), practice.served(day))
+        plan, problems = self._problem_items(planned, Plan(day=day.isoformat(), mode=DAILY))
+        flash, left = self._flashcard_items(day)
+        items = place_flashcards(problems, flash)
+        return replace(
+            plan,
+            n=len(problems),
+            items=tuple(items),
+            flashcards=left,
+            info={"engine": ENGINE, "summary": self._summary_info(planned)},
         )
 
-    def _extra_available(self, engine: Engine) -> bool:
-        return bool(engine.due_skills(self._today(engine) + timedelta(days=1)))
+    def _problem_items(self, planned: PracticePlan, plan: Plan) -> tuple[Plan, list[PlanItem]]:
+        """The planner's items as plan items, with fresh keys."""
+        catalog = self._practice.catalog()
+        version = self._practice.params().version
+        out = []
+        for p in planned.items:
+            plan, key = plan.next_key("pp")
+            out.append(_plan_item(key, p, catalog, version))
+        return plan, out
 
-    # ================================================================ vacation (QUE-9)
-
-    def set_vacation(self, start: date, end: date) -> None:
-        if end < start:
-            raise QueueError("A vacation ends on or after its first day.")
-        write_vacation(self._storage.users, Vacation(start=start, end=end))
-
-    def clear_vacation(self) -> None:
-        write_vacation(self._storage.users, None)
-
-    # ================================================================ goals (I2)
-
-    def preview_goal(self, goal: CourseGoal | Mapping[str, Any]) -> v.GoalPreview:
-        """What a new course goal would do to the queue: "This makes N skills due", and
-        the days they would be spread over (nothing is saved)."""
-        with self._locked():
-            engine = self.engine()
-            return self._goal_view(self._goal_change(_goal(goal), engine)[0])
-
-    def set_goal(self, goal: CourseGoal | Mapping[str, Any]) -> v.GoalPreview:
-        """Save a course goal. Live due dates follow it (ENG-1), so skills it makes due at
-        once are spread over the next days with the load balancer, and every skill's cached
-        due date is refreshed so QUE-4 escalation counts from the new dates (I2)."""
-        with self._locked():
-            engine = self.engine()
-            new = _goal(goal)
-            change, rows = self._goal_change(new, engine)
-            users = self._storage.users
-            users.set_course_goal(new)
-            if rows:
-                users.apply(rows)
-            return self._goal_view(change)
-
-    def _goal_change(self, new: CourseGoal, engine: Engine) -> tuple[GoalChange, list[SkillState]]:
-        users = self._storage.users
-        days, adapter, catalog = engine.days(), engine.adapter(), engine.catalog()
-        adapter_of = engine.skill_adapters()  # each skill's own parameter set (decision 6)
-        today = self._today(engine)
-        old_goals = engine.goals()
-        new_goals = {**old_goals, new.course_id: new}
-        states = {
-            k: s for k, s in users.skill_states().items() if catalog.course_of(k) == new.course_id
+    def _summary_info(self, planned: PracticePlan) -> dict[str, Any]:
+        """What Home shows about the plan (kept in plan.info, so an open session's Home needs
+        no re-plan): hours to keep pace, skills behind and set aside, sittings, notes. Lists
+        and notes are in plain words (skill names, never ids or formulas); `set_aside_ids`
+        keeps the ids, for the study screen's set-aside notice."""
+        catalog = self._practice.catalog()
+        names = catalog.name
+        behind: list[str] = []
+        aside_ids: list[str] = []
+        sittings: list[dict[str, Any]] = []
+        notes: list[str] = []
+        for day_plan in planned.plans.values():
+            behind += [names(k) for k in day_plan.behind]
+            aside = [str(k) for k in getattr(day_plan, "set_aside", ())]
+            aside_ids += aside
+            for sid, skills in tuple(getattr(day_plan, "sittings", ())):
+                sittings.append({"id": str(sid), "skills": [names(k) for k in skills]})
+            notes += [plain_note(note, catalog, set_aside=aside) for note in day_plan.notes]
+        return {
+            "hours_to_keep_pace": planned.hours_to_keep_pace,
+            "hours_basis": planned.hours_basis,
+            "standard_hours": planned.standard_hours,
+            "behind": list(dict.fromkeys(behind)),
+            "set_aside": list(dict.fromkeys(names(k) for k in aside_ids)),
+            "set_aside_ids": list(dict.fromkeys(aside_ids)),
+            "sittings": sittings,
+            "notes": list(dict.fromkeys(notes)),
         }
-        others = [s for k, s in users.skill_states().items() if k not in states]
 
-        def old(k: str) -> float:
-            return skill_retention(k, today, catalog, old_goals)
-
-        def fresh(k: str) -> float:
-            return skill_retention(k, today, catalog, new_goals)
-
-        load = scheduled_load(
-            others,
-            today,
-            SPREAD_DAYS,
-            retention_of=old,
-            adapter=adapter,
-            days=days,
-            adapter_of=adapter_of,
+    def _deck(self, day: date) -> Any:
+        days = self._practice.days()
+        users = self._storage.users
+        legacy = {k for k, s in users.skill_states().items() if s.introduced_at is not None}
+        return day_flashcards(
+            self._storage,
+            hidden=self._practice.unavailable(),
+            skill_sections={
+                s.id: s.section_id for s in self._storage.packs.skills() if s.section_id
+            },
+            section_states={k: s.state for k, s in users.section_states().items()},
+            scheduled=self._practice.scheduled_skills(),
+            introduced=self._practice.introduced(day) | legacy,
+            tomorrow_start=days.start(day + timedelta(days=1)),
+            today_start=days.start(day),
         )
-        easy = users.settings().get("queue.easy_days") or {}
-        change = goal_change(
-            states.values(),
-            today,
-            old_retention=old,
-            new_retention=fresh,
-            adapter=adapter,
-            days=days,
-            load=load,
-            easy_days=easy if isinstance(easy, dict) else {},
-            adapter_of=adapter_of,
-        )
-        spread = {s.skill_id: s for s in change.states}
-        rows = []
-        for k, state in states.items():
-            row = spread.get(k, state)
-            due = due_day(row, fresh(k), adapter_of(k), days)
-            cached = None if due is None else days.start(due)
-            if row is not state or cached != state.due_at:
-                rows.append(replace(row, due_at=cached))
-        return change, rows
 
-    def _goal_view(self, change: GoalChange) -> v.GoalPreview:
-        return v.GoalPreview(
-            newly_due=len(change.newly_due),
-            message=change.message,
-            per_day={d.isoformat(): n for d, n in change.per_day().items()},
+    def _flashcard_items(self, day: date) -> tuple[list[PlanItem], int]:
+        """The day's flashcards (I5, like Anki's limits): the daily limit less those done
+        today, new ones only up to `daily.new_flashcards` less today's new ones. Returns the
+        items and the limit left (refreshers draw on it)."""
+        days = self._practice.days()
+        start, end = days.bounds(day)
+        done = [
+            a
+            for a in self._storage.users.attempts(since=start, until=end)
+            if a.final and a.card_kind in ("flashcard", "cloze")
+        ]
+        limit = max(0, int(self._setting("daily.flashcards", 50)) - len(done))
+        new_left = int(self._setting("daily.new_flashcards", 20)) - sum(
+            1 for a in done if a.predicted_recall is None
         )
+        deck = self._deck(day)
+        catalog = self._practice.catalog()
+        out: list[PlanItem] = []
+        for card_id, ord_, skill in deck.due:
+            if len(out) >= limit:
+                break
+            if (card_id, ord_) in deck.new:
+                if new_left <= 0:
+                    continue
+                new_left -= 1
+            out.append(_flashcard_item(card_id, ord_, skill, catalog))
+        return out, max(0, limit - len(out))
+
+    def _tomorrow(self, day: date) -> PracticePlan:
+        tomorrow = day + timedelta(days=1)
+        return self._practice.plan_day(tomorrow, self._practice.days().moment(tomorrow))
+
+    def _extra_items(
+        self, day: date, count: int, planned: PracticePlan | None = None
+    ) -> list[PlannedItem]:
+        """Extra practice: the growth and maintenance problems tomorrow's plan holds
+        (`planned`: that plan, when the caller has it)."""
+        planned = planned or self._tomorrow(day)
+        chosen = [
+            p
+            for p in planned.items
+            if p.item.problem is not None and p.item.role in ("growth", "maintenance")
+        ]
+        return chosen[:count]
+
+    def _extra_plan(self, req: v.StartRequest, day: date) -> Plan:
+        catalog = self._practice.catalog()
+        version = self._practice.params().version
+        plan = Plan(day=day.isoformat(), mode="extra")
+        items = []
+        for p in self._extra_items(day, req.count or EXTRA_DEFAULT):
+            plan, key = plan.next_key("ex")
+            item = _plan_item(key, p, catalog, version)
+            items.append(replace(item, why=why("review.extra-plan")))
+        return replace(plan, n=len(items), items=tuple(items), info={"engine": ENGINE})
 
     # ================================================================ sessions
 
-    def _open_session(self, engine: Engine) -> SessionState | None:
-        """Today's open session. One left open from an earlier study day is closed first:
-        its saved answer is graded, a practice test is graded, and the row is ended (QUE-16:
-        a plan from before the rollover is rebuilt)."""
+    def _open_session(self) -> SessionState | None:
+        """Today's open session. One from an earlier study day, or one an older build
+        planned, is closed first: its held answer is graded (at its own time), a practice
+        test is graded, and the row is ended (QUE-16: a plan from before the rollover is
+        rebuilt)."""
         users = self._storage.users
         session = users.latest_open_session()
         if session is None:
             return None
-        if session.study_day == self._today(engine).isoformat():
-            return self._recover(session, engine)
-        session = self._recover(session, engine)
+        plan = Plan.from_json(session.plan)
+        ours = plan.info.get("engine") == ENGINE
+        if ours:
+            session = self._recover(session)
+            if not self._resumed:
+                session = self._interrupted(session, plan)
+        self._resumed = True
+        if ours and session.study_day == self._today().isoformat():
+            return session
         plan = Plan.from_json(session.plan)
         if session.current and session.current.get("pending"):
-            session, plan, _ = self._finalize(session, plan, engine)
+            session, plan, _ = self._finalize(session, plan, replan=False)
         if plan.mode == "practice-test":
-            self._grade_test(session, plan, engine)
+            self._grade_test(session, plan)
         users.end_session(_id(session))
         return None
 
-    def _recover(self, session: SessionState, engine: Engine) -> SessionState:
-        """Finish a re-plan a crash interrupted (the answer committed, its follow-ups not)."""
+    def _interrupted(self, session: SessionState, plan: Plan) -> SessionState:
+        """At the first look after a launch: a sitting problem left on screen unanswered was
+        interrupted (the app was quit or crashed), so its time is unknown and the sitting is
+        void rather than failed on a clock that ran while the app was closed."""
+        cur = session.current
+        if not cur or cur.get("pending") or cur.get("closed") or cur.get("interrupted"):
+            return session
+        item = plan.item(str(cur.get("key")))
+        if item is None or item.purpose != "sitting" or item.meta is None:
+            return session
+        return self._storage.users.save_session(
+            replace(session, current={**cur, "interrupted": True})
+        )
+
+    def _recover(self, session: SessionState) -> SessionState:
+        """Finish a re-plan a crash interrupted (the answer committed, its follow-up not)."""
         key = session.extra.get("replan")
         if not key:
             return session
         plan = Plan.from_json(session.plan)
-        presentation = (session.current or {}).get("presentation_id")
+        current = dict(session.current or {})
+        presentation = current.get("presentation_id")
         attempt = next(
             (
                 a
@@ -536,19 +471,15 @@ class StudyService:
             None,
         )
         if attempt is not None:
-            plan, extra = self._after_answer(session, plan, str(key), attempt, None, engine)
-        else:
-            extra = dict(session.extra)
-        extra.pop("replan", None)
-        current = dict(session.current or {})
-        if attempt is not None:
             current["attempt_id"] = attempt.id
+            plan = self._replan(session, plan, str(key))
+        extra = {k: val for k, val in session.extra.items() if k != "replan"}
         return self._storage.users.save_session(
             replace(session, plan=plan.to_json(), current=current or None, extra=extra)
         )
 
-    def _require(self, engine: Engine) -> tuple[SessionState, Plan]:
-        session = self._open_session(engine)
+    def _require(self) -> tuple[SessionState, Plan]:
+        session = self._open_session()
         if session is None:
             raise QueueError("No study session is open. Press Start.")
         return session, Plan.from_json(session.plan)
@@ -556,110 +487,95 @@ class StudyService:
     def resume(self) -> v.Turn | None:
         """QUE-16: the open session at the same problem, or None."""
         with self._locked():
-            engine = self.engine()
-            session = self._open_session(engine)
-            return None if session is None else self._turn(session, engine)
+            session = self._open_session()
+            return None if session is None else self._turn(session)
 
     def current(self) -> v.Turn:
         with self._locked():
-            engine = self.engine()
-            session, _ = self._require(engine)
-            return self._turn(session, engine)
+            session, _ = self._require()
+            return self._turn(session)
 
     def start(self, request: v.StartRequest | Mapping[str, Any] | None = None) -> v.Turn:
-        """Start a session, or resume today's open one (a daily start always resumes)."""
+        """Start a session, or resume today's open one of the same mode."""
         req = request if isinstance(request, v.StartRequest) else v.StartRequest.from_dict(request)
         with self._locked():
-            engine = self.engine()
+            self._launch()
             users = self._storage.users
-            open_session = self._open_session(engine)
+            if req.mode not in MODES:
+                raise QueueError(f"Unknown study mode {req.mode!r}.")
+            day = self._today()
+            if req.mode == "practice-test":
+                self._test_exam(req, day)  # refused before the open session is closed
+            open_session = self._open_session()
             if open_session is not None:
-                mode = Plan.from_json(open_session.plan).mode
-                if (req.mode in DAILY_MODES and mode in DAILY_MODES) or req.mode == mode:
-                    if req.mode == "lighter" and mode == "daily":
-                        return self._set_lighter(open_session, True, engine)
-                    return self._turn(open_session, engine)
-                self._close(open_session, engine)
-            day = self._today(engine)
-            settings = self._settings(day)
-            plan = self._new_plan(req, engine, day)
+                if Plan.from_json(open_session.plan).mode == req.mode:
+                    return self._turn(open_session)
+                self._close(open_session)  # its held answer and test are graded first
+            plan = self._new_plan(req, day)
             if not plan.items:
-                return self._empty_turn(plan, engine)
+                return self._empty_turn(plan)
+            untimed = bool(self._setting("session.untimed_default", False))
             session = users.start_session(
                 SessionState(
                     study_day=day.isoformat(),
                     started_at=self._now(),
-                    untimed=settings.untimed_default if req.untimed is None else req.untimed,
+                    untimed=untimed if req.untimed is None else req.untimed,
                     plan=plan.to_json(),
                     extra={"active_total_ms": 0, "breaks": 0, "learned": []},
                 )
             )
-            session = self._advance(session, plan, engine)
-            return self._turn(session, engine)
+            session = self._advance(session, plan)
+            return self._turn(session)
 
-    def _new_plan(self, req: v.StartRequest, engine: Engine, day: date) -> Plan:
-        mode = req.mode
-        if mode in DAILY_MODES:
-            self._daily_run(engine)
-            snap = gather(self._storage, engine)
-            plan = build_plan(snap, mode=mode, lighter=mode == "lighter")
-            self._log_day(snap, plan)
-            return plan
-        if mode == "extra":
-            snap = gather(self._storage, engine, day=day + timedelta(days=1), for_mode="extra")
-            plan = build_plan(
-                snap,
-                mode="extra",
-                n=req.count or EXTRA_DEFAULT,
-                include_new=False,
-                flashcards=False,
-            )
-            return replace(plan, day=day.isoformat())
-        if mode == "focused":
-            return self._focused_plan(req, engine)
-        if mode == "practice-test":
-            return self._test_plan(req, engine, day)
-        raise QueueError(f"unknown study mode {mode!r}")
+    def _new_plan(self, req: v.StartRequest, day: date) -> Plan:
+        if req.mode == DAILY:
+            return self._daily_plan(day)
+        if req.mode == "extra":
+            return self._extra_plan(req, day)
+        if req.mode == "practice-test":
+            return self._test_plan(req, day)
+        raise QueueError(f"unknown study mode {req.mode!r}")
 
-    def _empty_turn(self, plan: Plan, engine: Engine) -> v.Turn:
-        if plan.info.get("vacation"):
-            message = "Vacation mode is on: nothing is scheduled today."
-        elif plan.mode in DAILY_MODES:
-            message = "Today's plan is done. Extra practice is there if you want it."
+    def _empty_turn(self, plan: Plan) -> v.Turn:
+        if plan.mode == DAILY:
+            if not self._practice.active_courses():
+                message = "Set up a course first: its start date, or the section your class is at."
+            else:
+                message = "Today's plan is done."
         else:
             message = "Nothing to practice here right now."
         return v.Turn(type="empty", message=message, mode=plan.mode)
 
-    def _close(self, session: SessionState, engine: Engine) -> None:
+    def _close(self, session: SessionState) -> None:
         plan = Plan.from_json(session.plan)
         if session.current and session.current.get("pending"):
-            session, plan, _ = self._finalize(session, plan, engine)
+            session, plan, _ = self._finalize(session, plan, replan=False)
         if plan.mode == "practice-test":
-            self._grade_test(session, plan, engine)
+            self._grade_test(session, plan)
         self._storage.users.end_session(_id(session))
 
     def end(self) -> v.Summary:
-        """End the session: grade a saved answer, then the summary with tomorrow's forecast."""
+        """End the session: grade a held answer, then the summary with tomorrow's forecast."""
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             if session.current and session.current.get("pending"):
-                session, plan, _ = self._finalize(session, plan, engine)
+                session, plan, _ = self._finalize(session, plan, replan=False)
             test = None
             if plan.mode == "practice-test":
-                session, plan, test = self._grade_test(session, plan, engine)
+                session, plan, test = self._grade_test(session, plan)
             ended = self._storage.users.end_session(_id(session))
-            summary = self._summary(ended, plan, engine, test)
+            summary = self._summary(ended, plan, test)
         self.start_auto_fit()
         return summary
 
-    # ================================================================ automatic fitting (I7)
+    # ================================================================ background fits
 
     def start_auto_fit(self) -> bool:
-        """I7: refit the parameter sets that are due, in the background, after a session
-        ends (never mid-answer). The fitting runs outside the service lock; writing an
-        adopted set and the recompute that follows take it, so they fall between two calls
-        and never interleave with a graded answer. False when a fit is still running."""
+        """After a session (never mid-answer), in the background, one at a time: the flashcard
+        parameter sets that are due (I7), then the learner's refit when it is due (design
+        3.6). Fitting runs outside the service lock; recording an outcome takes it, so it falls
+        between two calls and never interleaves with a graded answer. False when a fit is
+        still running."""
         if self._fitter is not None and self._fitter.is_alive():
             return False
         self._fitter = threading.Thread(target=self._auto_fit, name="auto-fit", daemon=True)
@@ -668,9 +584,13 @@ class StudyService:
 
     def _auto_fit(self) -> None:
         try:
-            self.last_auto_fit = Engine(self._storage).auto_fit(writing=self._locked)
+            self.last_auto_fit = self.engine().auto_fit(writing=self._locked, kinds=("flashcard",))
         except Exception as error:
             self.last_auto_fit = error
+        try:
+            self.last_refit = self._practice.refit(writing=self._locked)
+        except Exception as error:
+            self.last_refit = error
 
     def wait_for_auto_fit(self, timeout: float | None = None) -> bool:
         """Block until a background fit is done (tests, closing the profile)."""
@@ -679,104 +599,41 @@ class StudyService:
             fitter.join(timeout)
         return fitter is None or not fitter.is_alive()
 
-    def set_lighter(self, on: bool = True) -> v.Turn:
-        """QUE-10: same due skills, tier 1-2 problems, no new skills; successes count Hard."""
-        with self._locked():
-            engine = self.engine()
-            session, _ = self._require(engine)
-            return self._set_lighter(session, on, engine)
-
-    def _set_lighter(self, session: SessionState, on: bool, engine: Engine) -> v.Turn:
-        plan = Plan.from_json(session.plan)
-        if plan.mode not in DAILY_MODES:
-            raise QueueError("A Lighter set applies to the daily plan.")
-        plan = replace(plan, lighter=on, mode="lighter" if on else "daily")
-        if on:
-            started = {i.block for i in plan.done if i.block}
-            drop = [i.key for i in plan.pending if i.order == NEW and i.block not in started]
-            plan = rebalance(plan, drop=drop, confusable=self._confusable(engine))
-        cur = session.current
-        if cur is not None and plan.item(str(cur["key"])) is None:
-            # QUE-10 adds no new skills: a block counts as started once one of its items is
-            # done, so the worked example on screen leaves with its skill (nothing of it is
-            # graded yet) and the session moves on to the next item, still resumable (QUE-16).
-            session = self._advance(replace(session, current=None), plan, engine)
-        else:
-            session = self._storage.users.save_session(replace(session, plan=plan.to_json()))
-        return self._turn(session, engine)
-
     # ================================================================ serving
 
-    def _confusable(self, engine: Engine) -> dict[str, frozenset[str]]:
-        if isinstance(engine, _CallEngine):
-            return engine.confusable()
-        return confusable_map(engine.catalog())
-
-    def _advance(self, session: SessionState, plan: Plan, engine: Engine) -> SessionState:
-        """Make the first pending item current (picking its problem) and save."""
+    def _advance(self, session: SessionState, plan: Plan) -> SessionState:
+        """Make the first pending item current and save. An item whose card is no longer
+        available (suspended, reported or gone) is skipped; in a daily plan the planner is
+        asked once more first, so another problem takes its place."""
         users = self._storage.users
         now = self._now()
+        unavailable = self._practice.unavailable()
+        replanned = False
         while True:
             item = plan.first_pending()
             if item is None:
                 return users.save_session(
                     replace(session, plan=plan.to_json(), current=None, active_ms=0, draft=None)
                 )
-            if self._example_first(item, plan):
-                plan, key = plan.next_key("exf")
-                example = replace(
-                    item,
-                    key=key,
-                    kind="example",
-                    tag="relearn",
-                    label=TAG_LABELS["relearn"],
-                    why=why("relearn.example"),
-                    card_id=None,
-                    anchor=None,
-                    gap=0,
-                    check_id=None,
-                    check_kind=None,
-                    stretch=False,
-                    block=None,
-                    est_ms=EXAMPLE_MS,
-                    inserted=True,
-                )
-                items = list(plan.items)
-                items.insert(plan.index(item.key), example)
-                plan = plan.with_items(items)
-                continue
-            picked = self._pick(item, plan, engine, now)
-            if picked is None:
+            card = self._available(item, unavailable)
+            if card is None:
+                if plan.mode == DAILY and item.kind != "flashcard" and not replanned:
+                    replanned = True
+                    plan = self._with_plan(plan, self._fresh_plan(plan))
+                    continue
                 plan = plan.updated(replace(item, status="skipped", result={"no_problem": True}))
-                plan = rebalance(
-                    plan, prefer_course=item.course_id, confusable=self._confusable(engine)
-                )
                 continue
-            card_id, stretch = picked
-            if item.stretch and not stretch:  # the engine declined the stretch tier
-                item = replace(item, stretch=False, tag="review", label="Review", why=why("review"))
-                plan = plan.updated(item)
-            card = self._card(card_id)
-            if card.kind == "find-error" and item.card_id is None and item.kind == "problem":
-                item = replace(item, why=why("review.find-error"))
-                plan = plan.updated(item)
             current = {
                 "key": item.key,
-                "card_id": card_id,
+                "card_id": card.id,
                 "rev": card.rev,
                 "presentation_id": _uid(),
                 "shown_at": now,
                 "tries": 0,
-                "hints": 0,
-                "last_hint": False,
                 "example_opened": False,
-                "stretch": stretch,
                 "pending": None,
                 "closed": False,
             }
-            if card.kind == "find-error":  # early on: "Step 3 is wrong. Why?"
-                history = users.attempts(skill_id=card.skill_id) if card.skill_id else []
-                current["highlighted"] = find_error_highlighted(history)
             return users.save_session(
                 replace(
                     session,
@@ -788,131 +645,22 @@ class StudyService:
                 )
             )
 
-    def _example_first(self, item: PlanItem, plan: Plan) -> bool:
-        """The diagnosis flow asked for a worked example before this skill's next problem
-        (an unsolved cued twin); the example is served first and clears the request."""
-        return (
-            self._diagnosis
-            and item.kind == "problem"
-            and item.skill_id is not None
-            and plan.mode != "practice-test"
-            and Diagnosis(self._storage).needs_example(item.skill_id)
-        )
-
-    def _pick(
-        self, item: PlanItem, plan: Plan, engine: Engine, now: int
-    ) -> tuple[str, bool] | None:
-        users, packs = self._storage.users, self._storage.packs
-        marks = users.card_marks()
-        hidden = {k for k, m in marks.items() if m.hidden or m.suspended}
-        if item.kind == "flashcard":
-            return (item.card_id, False) if item.card_id and item.card_id not in hidden else None
-        if item.kind == "example":
-            refs = [
-                r
-                for r in packs.card_refs(skill_id=item.skill_id)
-                if r.kind == "example" and r.id not in hidden
-            ]
-            if not refs:
-                # ENG-2: no example card, so a tier 1 problem is shown solved instead (never
-                # graded; it is not served again as a problem today).
-                if item.skill_id is None:
-                    return None
-                shown = engine.pick_problem(
-                    item.skill_id, at_ms=now, tiers=(1,), kinds=("problem",)
-                )
-                return None if shown is None else (shown.card.id, False)
-            seen = users.card_users()
-            best = min(refs, key=lambda r: (seen[r.id].last_seen_at or 0) if r.id in seen else -1)
-            return best.id, False
-        if item.card_id and item.card_id not in hidden:
-            return item.card_id, item.stretch
-        if item.skill_id is None:
+    def _available(self, item: PlanItem, unavailable: frozenset[str]) -> Card | None:
+        if item.card_id is None or item.card_id in unavailable:
             return None
-        last = users.attempts(skill_id=item.skill_id, limit=1, newest_first=True)
-        last_id = last[0].card_id if last else None
-        if item.method:  # ENG-16: which-method items, only while the skill is active
-            if not Diagnosis(self._storage).method_choice_active(item.skill_id):
-                return None
-            pick = engine.pick_problem(
-                item.skill_id, last_card_id=last_id, at_ms=now, kinds=("method",)
-            )
-            return None if pick is None else (pick.card.id, False)
-        found = self._find_error(item, plan, engine, now)
-        if found is not None:
-            return found, False
-        pick = engine.pick_problem(
-            item.skill_id,
-            stretch=item.stretch,
-            lighter_set=plan.lighter,
-            last_card_id=last_id,
-            at_ms=now,
-            kinds=("problem",),
-        )
-        return None if pick is None else (pick.card.id, pick.stretch)
-
-    def _find_error(self, item: PlanItem, plan: Plan, engine: Engine, now: int) -> str | None:
-        """A find-the-error item in place of a skill's review problem (it counts as the
-        review): once the skill has two successful uncued reviews, at most one in every
-        `queue.find_error_one_in` problems served (setting, 1 in 10; None turns them off),
-        and never a card seen in the last 90 days."""
-        if (
-            plan.mode == "practice-test"
-            or item.skill_id is None
-            or item.stretch
-            or item.block is not None
-            or item.check_id is not None
-            or item.anchor is not None
-            or item.purpose not in ("review", "booster", "checkup", "focused")
-        ):
+        try:
+            return self._card(item.card_id)
+        except QueueError:
             return None
-        users, packs = self._storage.users, self._storage.packs
-        one_in = DiagnosisSettings.from_settings(users.settings()).find_error_one_in
-        if one_in is None:
-            return None
-        seen = users.card_users()
-        fresh = [
-            r
-            for r in packs.card_refs(skill_id=item.skill_id)
-            if r.kind == "find-error"
-            and r.status == "active"
-            and (
-                r.id not in seen
-                or seen[r.id].last_seen_at is None
-                or now - int(seen[r.id].last_seen_at or 0) >= SEEN_SKIP_DAYS * DAY_MS
-            )
-        ]
-        if not fresh or memory_of(users.skill_state(item.skill_id)) is None:
-            return None
-        if not find_error_unlocked(users.attempts(skill_id=item.skill_id)):
-            return None
-        recent = [
-            a.card_kind
-            for a in users.attempts(limit=4 * one_in, newest_first=True)
-            if a.final and a.card_kind in ("problem", "find-error", "method")
-        ][: max(0, one_in - 1)]
-        if not find_error_slot_open(list(reversed(recent)), one_in):
-            return None
-        pick = engine.pick_problem(item.skill_id, at_ms=now, kinds=("find-error",))
-        if pick is None or pick.card.id not in {r.id for r in fresh}:
-            return None
-        return pick.card.id
 
     # ================================================================ turns and views
 
-    def _turn(
-        self,
-        session: SessionState,
-        engine: Engine,
-        *,
-        message: str = "",
-        break_due: bool = False,
-    ) -> v.Turn:
+    def _turn(self, session: SessionState, *, message: str = "", break_due: bool = False) -> v.Turn:
         plan = Plan.from_json(session.plan)
         cur = session.current
         if cur is None:
             if plan.mode == "practice-test" or not plan.pending:
-                summary = self._end_after_last(session, plan, engine)
+                summary = self._end_after_last(session, plan)
                 return v.Turn(
                     type="summary",
                     session_id=session.id,
@@ -920,32 +668,33 @@ class StudyService:
                     message=message,
                     mode=plan.mode,
                 )
-            session = self._advance(session, plan, engine)
-            return self._turn(session, engine, message=message, break_due=break_due)
+            session = self._advance(session, plan)
+            return self._turn(session, message=message, break_due=break_due)
         item = plan.item(str(cur["key"]))
         if item is None:
             raise StorageError("the session's current item is missing from its plan")
         result = None
         if cur.get("pending") or cur.get("closed"):
-            result = self._result_view(session, plan, item, engine)
+            result = self._result_view(session, plan, item)
         return v.Turn(
             type="problem",
             session_id=session.id,
-            problem=self._problem_view(session, plan, item, engine),
+            problem=self._problem_view(session, plan, item),
             progress=self._progress(plan, item),
             result=result,
             message=message,
             break_due=break_due,
-            lighter=plan.lighter,
             mode=plan.mode,
         )
 
-    def _end_after_last(self, session: SessionState, plan: Plan, engine: Engine) -> v.Summary:
+    def _end_after_last(self, session: SessionState, plan: Plan) -> v.Summary:
         test = None
         if plan.mode == "practice-test":
-            session, plan, test = self._grade_test(session, plan, engine)
+            session, plan, test = self._grade_test(session, plan)
         ended = self._storage.users.end_session(_id(session))
-        return self._summary(ended, plan, engine, test)
+        summary = self._summary(ended, plan, test)
+        self.start_auto_fit()  # a session that finished through Continue
+        return summary
 
     def _progress(self, plan: Plan, item: PlanItem) -> v.Progress:
         done = [i for i in plan.items if i.status == "done" and i.slots]
@@ -957,57 +706,75 @@ class StudyService:
             correct=sum(1 for i in done if (i.result or {}).get("correct")),
         )
 
-    def _attempts_allowed(
-        self, plan: Plan, item: PlanItem, cur: Mapping[str, Any] | None = None
-    ) -> int:
-        """Tries per answer box. One for practice tests, which-method items (a choice among
-        three or four) and find-the-error items (graded on the step, reason and value)."""
-        if plan.mode == "practice-test" or item.kind != "problem" or item.method:
+    def _attempts_allowed(self, plan: Plan, item: PlanItem) -> int:
+        """Tries per answer box: one in a practice test and for flashcards; no limit for a
+        problem (only its first try counts)."""
+        if plan.mode == "practice-test" or item.kind != "problem":
             return 1
-        card_id = (cur or {}).get("card_id")
-        if card_id is not None and self._card(str(card_id)).kind in ("method", "find-error"):
-            return 1
-        return max(1, self._settings(date.fromisoformat(plan.day)).attempts_per_problem)
+        return NO_LIMIT
 
-    def _problem_view(
-        self, session: SessionState, plan: Plan, item: PlanItem, engine: Engine
-    ) -> v.ProblemView:
+    def _problem_view(self, session: SessionState, plan: Plan, item: PlanItem) -> v.ProblemView:
         cur = session.current or {}
         card = self._card(str(cur["card_id"]))
-        hints = card.hints[: int(cur.get("hints", 0))]
+        meta = item.meta or {}
+        textbook = self._practice.catalog().textbooks.get(item.skill_id or "")
+        if meta.get("sitting") or item.kind != "problem":
+            textbook = None  # a sitting is closed book; examples and flashcards carry none
         return v.ProblemView(
             item_key=item.key,
             kind=item.kind,
-            card=self._card_view(
-                card,
-                cued=item.check_kind == "cued-twin",
-                ord_=item.card_ord,
-                highlighted=bool(cur.get("highlighted")),
-                as_example=item.kind == "example",
-            ),
+            card=self._card_view(card, ord_=item.card_ord, as_example=item.kind == "example"),
             reason=v.Reason(tag=item.tag, label=item.label, why=item.why),
-            attempts_allowed=self._attempts_allowed(plan, item, cur),
+            attempts_allowed=self._attempts_allowed(plan, item),
             tries_used=int(cur.get("tries", 0)),
-            hints_shown=tuple(hints),
             draft=session.draft,
             active_ms=session.active_ms,
             target_ms=None,
             untimed=session.untimed,
             practice_test=plan.mode == "practice-test",
+            role=item.purpose if item.meta is not None and item.kind == "problem" else None,
+            plan_reason=str(meta["reason"]) if meta.get("reason") else None,
+            textbook=None
+            if textbook is None
+            else v.TextbookView(book=textbook.book, section=textbook.section),
+            sitting=self._sitting_view(plan, item),
         )
 
-    def _card_view(
-        self,
-        card: Card,
-        *,
-        cued: bool = False,
-        ord_: int = 0,
-        highlighted: bool = False,
-        as_example: bool = False,
-    ) -> v.CardView:
+    def _sitting_view(self, plan: Plan, item: PlanItem) -> v.SittingView | None:
+        """A sitting item: its place in the sitting, and its skill block's time limit (the
+        planner's `time_limit`: the sum of that skill's sitting problems' standard times)
+        against the sitting clock the block's earlier problems used (wall clock, pauses
+        included; the page adds the running time of the problem on screen). Nothing is cut
+        off at the limit."""
+        meta = item.meta or {}
+        sitting = meta.get("sitting")
+        if not sitting:
+            return None
+        members = [
+            i
+            for i in plan.items
+            if (i.meta or {}).get("sitting") == sitting and i.status != "skipped"
+        ]
+        keys = [i.key for i in members]
+        block = [i for i in members if i.skill_id == item.skill_id]
+        limit = meta.get("time_limit")
+        if limit is None:
+            limit = sum(float((i.meta or {}).get("standard") or 0.0) for i in block)
+        elapsed = sum(
+            int((i.result or {}).get("sitting_ms", (i.result or {}).get("active_ms")) or 0)
+            for i in block
+            if i.key != item.key and not i.pending
+        )
+        return v.SittingView(
+            id=str(sitting),
+            index=keys.index(item.key) + 1 if item.key in keys else 1,
+            total=len(members),
+            time_limit_ms=round(limit * MINUTE_MS),
+            block_elapsed_ms=elapsed,
+        )
+
+    def _card_view(self, card: Card, *, ord_: int = 0, as_example: bool = False) -> v.CardView:
         prompt = card.question_md or card.front_md or card.text_md or ""
-        if cued and card.cued_question_md:
-            prompt = card.cued_question_md  # a cued twin names the method
         back = card.back_md if card.kind == "flashcard" else None
         if card.kind == "cloze":  # one blank number per item, like Anki
             prompt = cloze.front(card.text_md, ord_)
@@ -1043,7 +810,6 @@ class StudyService:
             kind=card.kind,
             prompt_md=prompt,
             parts=parts,
-            hint_count=len(card.hints),
             calculator=card.calculator,
             angles=card.angles,
             plot=card.plot,
@@ -1052,13 +818,13 @@ class StudyService:
             solution_md=card.solution_md
             if card.kind == "example"
             else _worked_md(card)
-            if as_example  # a problem shown solved in place of an example card (ENG-2)
+            if as_example  # a problem shown solved in place of an example card
             else None,
             shown_work=_work(card),
             reasons=tuple(
                 v.ChoiceView(index=i, text_md=c.text_md) for i, c in enumerate(card.reasons)
             ),
-            error_step=card.error_step if card.kind == "find-error" and highlighted else None,
+            error_step=None,
             cloze=ord_ + 1 if card.kind == "cloze" else None,
             type_answer=card.kind == "flashcard" and card.answer is not None,
         )
@@ -1068,38 +834,29 @@ class StudyService:
         session: SessionState,
         plan: Plan,
         item: PlanItem,
-        engine: Engine,
         *,
         correct: bool,
         pending: Mapping[str, Any],
     ) -> v.SolutionView:
         card = self._card(str((session.current or {})["card_id"]))
-        catalog = engine.catalog()
+        catalog = self._practice.catalog()
         skill_id = card.skill_id
-        skill = catalog.skills.get(skill_id or "")
 
         def name(k: str | None) -> str | None:
-            s = catalog.skills.get(k or "")
-            return s.name if s is not None else None
+            return catalog.skill_names.get(k or "")
 
         active = pending.get("timing", {}).get("active_ms")
-        target = None
-        level = engine.level(skill_id) if skill_id else None
-        if skill_id and not session.untimed and level in ("learned", "exam", "mastered"):
-            target = engine.target_time(skill_id, card.tier)
+        standard = (item.meta or {}).get("standard")
+        target = None if standard is None or session.untimed else round(float(standard) * MINUTE_MS)
         time_text = None
         if active is not None and not session.untimed:
-            time_text = _clock(int(active)) + (f" · target {_clock(target)}" if target else "")
-        first_clean = (
-            correct
-            and int(pending.get("attempt_number", 1)) == 1
-            and int(pending.get("hints_used", 0)) == 0
-            and not pending.get("unsure")
-        )
-        easy_key = bool(self._storage.users.get_setting("rating.too_easy_key", True))
+            time_text = _clock(int(active)) + (f" · standard {_clock(target)}" if target else "")
+        first_clean = correct and int(pending.get("attempt_number", 1)) == 1
+        easy_key = bool(self._setting("rating.too_easy_key", True))
+        textbook = catalog.textbooks.get(skill_id or "")
         return v.SolutionView(
             skill_id=skill_id,
-            skill_name=skill.name if skill is not None else None,
+            skill_name=name(skill_id),
             answer_md=card.answer_md or card.answer,
             solution_md=card.solution_md,
             steps=tuple(
@@ -1116,32 +873,16 @@ class StudyService:
             active_ms=None if active is None else int(active),
             target_ms=target,
             time_text=time_text,
-            needs_diagnosis=not correct
-            and plan.mode != "practice-test"
-            and item.kind == "problem"
-            and card.kind == "problem",  # the picker is about one's own worked solution
-            # Only what the engine recorded for this answer (never recomputed here): an
-            # answer not graded yet has no confident error to show.
-            confident_error=not correct and bool((session.current or {}).get("confident_error")),
-            can_mark_too_easy=first_clean and easy_key,
-            textbook_ref=skill.textbook_ref if skill is not None and not correct else None,
+            confident_error=False,
+            can_mark_too_easy=first_clean and easy_key and plan.mode != "practice-test",
+            textbook_ref=None
+            if textbook is None or correct
+            else f"{textbook.book} {textbook.section}".strip(),
             rubric=card.rubric,
             shown_work=_work(card),
-            preselect_step=None
-            if correct
-            else next(
-                (
-                    int(p["wrong_step"])
-                    for p in pending.get("verdicts", ())
-                    if p.get("wrong_step") is not None
-                ),
-                None,
-            ),
         )
 
-    def _result_view(
-        self, session: SessionState, plan: Plan, item: PlanItem, engine: Engine
-    ) -> v.AttemptResult:
+    def _result_view(self, session: SessionState, plan: Plan, item: PlanItem) -> v.AttemptResult:
         cur = session.current or {}
         pending = cur.get("pending") or cur.get("answer") or {}
         correct = bool(pending.get("correct"))
@@ -1153,12 +894,12 @@ class StudyService:
             item_key=item.key,
             outcome=_outcome_of(pending),
             verdicts=tuple(v.PartVerdictView(**p) for p in pending.get("verdicts", ())),
-            solution=self._solution_view(
-                session, plan, item, engine, correct=correct, pending=pending
-            ),
+            solution=self._solution_view(session, plan, item, correct=correct, pending=pending),
             tries_used=int(cur.get("tries", 0)),
-            attempts_allowed=self._attempts_allowed(plan, item, cur),
-            find_error=_find_error_view(pending),
+            attempts_allowed=self._attempts_allowed(plan, item),
+            first_try_counted=bool(
+                pending.get("first_submission", int(pending.get("attempt_number", 1)) == 1)
+            ),
         )
 
     # ================================================================ answering
@@ -1166,8 +907,7 @@ class StudyService:
     def read_answer(self, raw: str, *, part: str | None = None, source: v.Source = "text") -> Any:
         """The live "We read your answer as ..." preview (never an attempt)."""
         with self._locked():
-            engine = self.engine()
-            session, _ = self._require(engine)
+            session, _ = self._require()
             card = self._card(str((session.current or {})["card_id"]))
             spec = next((p.spec for p in specs_for(card) if p.label == part), None)
             if spec is None:
@@ -1177,8 +917,7 @@ class StudyService:
     def tick(self, active_ms: int, draft: str | None = None) -> v.Tick:
         """Save the active time so far and the typed draft (QUE-16); break reminders."""
         with self._locked():
-            engine = self.engine()
-            session, _ = self._require(engine)
+            session, _ = self._require()
             cur = session.current or {}
             guarded = guard_timing(
                 TimingReport(active_ms=active_ms),
@@ -1203,7 +942,7 @@ class StudyService:
         total = int(extra.get("active_total_ms", 0)) + delta
         extra["active_total_ms"] = total
         due = False
-        minutes = self._storage.users.get_setting("ui.break_reminder_minutes", 50)
+        minutes = self._setting("ui.break_reminder_minutes", 50)
         if minutes:
             reached = total // (int(minutes) * MINUTE_MS)
             if reached > int(extra.get("breaks", 0)):
@@ -1231,8 +970,7 @@ class StudyService:
             request if isinstance(request, v.SubmitRequest) else v.SubmitRequest.from_dict(request)
         )
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             cur, item = self._current_item(session, plan, req.item_key)
             if item.kind == "example":
                 raise QueueError("A worked example has no answer to submit; continue.")
@@ -1255,8 +993,6 @@ class StudyService:
             base = {
                 "at": now,
                 "attempt_number": int(cur.get("tries", 0)) + 1,
-                "hints_used": _hints_used(cur),
-                "last_hint_used": bool(cur.get("last_hint")),
                 "unsure": req.confidence == "unsure",
                 "guessed": req.guessed,
                 "timing": _timing_json(guarded.timing),
@@ -1264,7 +1000,7 @@ class StudyService:
                 "raw_input": raw,
             }
             if plan.mode == "practice-test":
-                return self._submit_test(session, plan, item, cur, card, req, base, engine)
+                return self._submit_test(session, plan, item, cur, card, req, base)
 
             self_graded = any(s.spec.answer_type == "self" for s in specs)
             if req.self_grade is not None or req.rubric_ticked is not None:
@@ -1276,10 +1012,10 @@ class StudyService:
                     "verdict": "undecided" if cur.get("undecided") else "self",
                     "verdicts": [],
                 }
-                return self._hold(session, plan, item, cur, pending, engine, break_due)
+                return self._hold(session, plan, item, cur, pending, break_due)
             if card.parts and not self_graded:
                 return self._submit_parts(
-                    session, plan, item, cur, card, req, base, engine, break_due, guarded.flags
+                    session, plan, item, cur, card, req, base, break_due, guarded.flags
                 )
 
             checked = check_answers(
@@ -1288,17 +1024,7 @@ class StudyService:
                 req.answers[0].source if req.answers else "text",
                 self._checker,
             )
-            verdicts: list[dict[str, Any]] = [
-                {
-                    "part": p.part,
-                    "status": p.status,
-                    "read_as": p.read_as,
-                    "message": p.message,
-                    "feedback": p.feedback,
-                    "wrong_step": p.wrong_step,
-                }
-                for p in checked.verdicts
-            ]
+            verdicts = [_verdict_json(p) for p in checked.verdicts]
             if checked.invalid:
                 self._storage.users.save_session(replace(session, draft=raw))
                 return v.AttemptResult(
@@ -1309,6 +1035,7 @@ class StudyService:
                     tries_used=int(cur.get("tries", 0)),
                     attempts_allowed=self._attempts_allowed(plan, item),
                     break_due=break_due,
+                    can_retry=True,
                 )
             if checked.undecided:
                 cur.update(self_grade=True, undecided=not self_graded)
@@ -1318,60 +1045,43 @@ class StudyService:
                     outcome="self-grade",
                     verdicts=tuple(v.PartVerdictView(**p) for p in verdicts),
                     message="Compare your work with the solution and grade it yourself.",
-                    solution=self._solution_view(
-                        session, plan, item, engine, correct=False, pending=base
-                    ),
+                    solution=self._solution_view(session, plan, item, correct=False, pending=base),
                     tries_used=int(cur.get("tries", 0)),
                     attempts_allowed=self._attempts_allowed(plan, item),
                     break_due=break_due,
                 )
-            if card.kind == "find-error":
-                return self._submit_find_error(
-                    session, plan, item, cur, card, req, base, verdicts, checked, engine, break_due
-                )
             tries = int(cur.get("tries", 0)) + 1
-            allowed = self._attempts_allowed(plan, item, cur)
-            if not checked.correct and tries < allowed:
+            if not checked.correct:
                 cur["tries"] = tries
-                cur["last_verdicts"] = verdicts  # "Your answer" if the student then gives up
-                extra = {k: val for k, val in session.extra.items() if k != "undo"}
-                trying = replace(session, current=cur, draft=None, extra=extra)
-                facts = AnswerFacts(
-                    correct=False, attempt_number=tries, hints_used=_hints_used(cur)
-                )
-                outcome = self._outcome(
-                    trying,
-                    plan,
-                    item,
-                    cur,
-                    facts=facts,
-                    timing=guarded.timing,
-                    at=now,
-                    raw=raw,
-                    parsed=_parsed(verdicts),
-                    verdict="incorrect",
-                    matched_wrong=checked.matched_index,
-                    flags=guarded.flags,
-                )
-                engine.record_try(outcome)
+                cur["last_verdicts"] = verdicts  # "Your answer" beside the solution, later
+                wrong = {
+                    **base,
+                    "correct": False,
+                    "verdict": "incorrect",
+                    "parsed": _parsed(verdicts),
+                    "matched_wrong": checked.matched_index,
+                }
+                self._record_try(session, plan, item, cur, card, wrong)
                 return v.AttemptResult(
                     item_key=item.key,
                     outcome="retry",
-                    verdicts=tuple(v.PartVerdictView(**p) for p in verdicts),
+                    verdicts=tuple(v.PartVerdictView(**_quiet(p)) for p in verdicts),
                     message="Not quite.",
                     tries_used=tries,
-                    attempts_allowed=allowed,
+                    attempts_allowed=self._attempts_allowed(plan, item),
                     break_due=break_due,
+                    can_retry=True,
+                    first_try_counted=tries == 1,
                 )
             pending = {
                 **base,
-                "correct": checked.correct,
-                "verdict": "correct" if checked.correct else "incorrect",
+                "correct": True,
+                "verdict": "correct",
                 "verdicts": verdicts,
                 "parsed": _parsed(verdicts),
-                "matched_wrong": checked.matched_index,
+                "matched_wrong": None,
             }
-            return self._hold(session, plan, item, cur, pending, engine, break_due)
+            return self._hold(session, plan, item, cur, pending, break_due)
 
     def _submit_parts(
         self,
@@ -1382,14 +1092,12 @@ class StudyService:
         card: Card,
         req: v.SubmitRequest,
         base: dict[str, Any],
-        engine: Engine,
         break_due: bool,
         flags: Sequence[str],
     ) -> v.AttemptResult:
-        """Multi-part problems: one box, verdict and attempt count per part. A part is final
-        once right or out of tries; the problem is graded when every part is final (a part
-        with its own skill reports to it; the card's skill takes the worst of the rest)."""
-        allowed = self._attempts_allowed(plan, item, cur)
+        """Multi-part problems: one box, verdict and try count per part. A part is final once
+        right; each "Not quite" is logged at once against its part. The problem is final when
+        every part is (or when the student gives up on the rest)."""
         state: dict[str, dict[str, Any]] = {
             str(k): dict(x) for k, x in dict(cur.get("parts") or {}).items()
         }
@@ -1408,21 +1116,16 @@ class StudyService:
         raw = " | ".join(f"{k}: {given[k].value}" for k in targets)
 
         def view(p: Any, final: bool, tries: int) -> dict[str, Any]:
-            return {
-                "part": p.part,
-                "status": p.status,
-                "read_as": p.read_as,
-                "message": p.message,
-                "feedback": p.feedback,
-                "wrong_step": p.wrong_step,
-                "final": final,
-                "tries_used": tries,
-            }
+            return {**_verdict_json(p), "final": final, "tries_used": tries}
 
-        def shown() -> list[dict[str, Any]]:
-            return [
-                state[p.label]["verdict"] for p in card.parts if "verdict" in state.get(p.label, {})
-            ]
+        def shown(*, quiet: bool) -> list[dict[str, Any]]:
+            out = []
+            for p in card.parts:
+                entry = state.get(p.label, {})
+                if "verdict" in entry:
+                    verdict = entry["verdict"]
+                    out.append(_quiet(verdict) if quiet and not entry.get("final") else verdict)
+            return out
 
         if checked.invalid:
             fresh = [
@@ -1436,8 +1139,9 @@ class StudyService:
                 verdicts=tuple(v.PartVerdictView(**p) for p in fresh),
                 message="Not counted: fix the answer's form and submit again.",
                 tries_used=int(cur.get("tries", 0)),
-                attempts_allowed=allowed,
+                attempts_allowed=NO_LIMIT,
                 break_due=break_due,
+                can_retry=True,
             )
         if checked.undecided:  # the checker can't decide a part: the student grades it all
             cur.update(self_grade=True, undecided=True)
@@ -1445,66 +1149,56 @@ class StudyService:
             return v.AttemptResult(
                 item_key=item.key,
                 outcome="self-grade",
-                verdicts=tuple(v.PartVerdictView(**p) for p in [*shown()]),
+                verdicts=tuple(v.PartVerdictView(**p) for p in shown(quiet=True)),
                 message="Compare your work with the solution and grade it yourself.",
-                solution=self._solution_view(
-                    session, plan, item, engine, correct=False, pending=base
-                ),
+                solution=self._solution_view(session, plan, item, correct=False, pending=base),
                 tries_used=int(cur.get("tries", 0)),
-                attempts_allowed=allowed,
+                attempts_allowed=NO_LIMIT,
                 break_due=break_due,
             )
         retrying: list[str] = []
+        firsts = False
         for p in checked.verdicts:
             label = str(p.part)
             entry = state.setdefault(label, {"tries": 0})
             entry["tries"] = int(entry.get("tries", 0)) + 1
+            firsts = firsts or entry["tries"] == 1
             entry["correct"] = p.status == Status.CORRECT
-            entry["final"] = entry["correct"] or entry["tries"] >= allowed
+            entry["final"] = entry["correct"]
             entry["verdict"] = view(p, entry["final"], entry["tries"])
             entry["raw"] = given[label].value
             entry["read_as"] = p.read_as
+            entry["matched_wrong"] = p.wrong_index
             if not entry["final"]:
                 retrying.append(label)
         cur["parts"] = state
         cur["tries"] = max(int(x.get("tries", 0)) for x in state.values())
-        now = int(base["at"])
         for label in retrying:  # each "Not quite" is logged at once, against its part
             entry = state[label]
-            trying = replace(
-                session,
-                current=cur,
-                extra={k: val for k, val in session.extra.items() if k != "undo"},
-            )
-            outcome = self._outcome(
-                trying,
-                plan,
-                item,
-                cur,
-                facts=AnswerFacts(
-                    correct=False,
-                    attempt_number=int(entry["tries"]),
-                    hints_used=_hints_used(cur),
-                ),
-                timing=TimingFacts(**base.get("timing", {})),
-                at=now,
-                raw=str(entry["raw"]),
-                parsed=entry.get("read_as"),
-                verdict="incorrect",
-                flags=flags,
-            )
-            engine.record_try(replace(outcome, part=label))
+            wrong = {
+                **base,
+                "attempt_number": int(entry["tries"]),
+                "correct": False,
+                "verdict": "incorrect",
+                "raw_input": str(entry["raw"]),
+                "parsed": entry.get("read_as"),
+                "matched_wrong": entry.get("matched_wrong"),
+                "flags": list(flags),
+            }
+            self._record_try(session, plan, item, cur, card, wrong, part=label)
         if not all(state.get(p.label, {}).get("final") for p in card.parts):
             extra = {k: val for k, val in session.extra.items() if k != "undo"}
             self._storage.users.save_session(replace(session, current=cur, draft=None, extra=extra))
             return v.AttemptResult(
                 item_key=item.key,
                 outcome="retry",
-                verdicts=tuple(v.PartVerdictView(**p) for p in shown()),
+                verdicts=tuple(v.PartVerdictView(**p) for p in shown(quiet=True)),
                 message="Not quite." if retrying else "Saved. Now the other parts.",
                 tries_used=int(cur["tries"]),
-                attempts_allowed=allowed,
+                attempts_allowed=NO_LIMIT,
                 break_due=break_due,
+                can_retry=True,
+                first_try_counted=firsts,
             )
         outcomes = [
             PartOutcome(
@@ -1516,67 +1210,28 @@ class StudyService:
             )
             for p in card.parts
         ]
-        facts = card_facts(AnswerFacts(correct=False), outcomes, card.skill_id or "")
-        final = shown()
+        correct, number, _ = _parts_facts(outcomes)
+        final = shown(quiet=False)
         pending = {
             **base,
             "raw_input": " | ".join(
                 f"{p.label}: {state[p.label].get('raw', '')}" for p in card.parts
             ),
-            "attempt_number": facts.attempt_number,
-            "correct": facts.correct,
-            "verdict": "correct" if facts.correct else "incorrect",
+            "attempt_number": number,
+            "correct": correct,
+            "verdict": "correct" if correct else "incorrect",
             "verdicts": final,
             "parsed": _parsed(final),
             "parts": [o.as_json() for o in outcomes],
         }
-        return self._hold(session, plan, item, cur, pending, engine, break_due)
-
-    def _submit_find_error(
-        self,
-        session: SessionState,
-        plan: Plan,
-        item: PlanItem,
-        cur: dict[str, Any],
-        card: Card,
-        req: v.SubmitRequest,
-        base: dict[str, Any],
-        verdicts: list[dict[str, Any]],
-        checked: Any,
-        engine: Engine,
-        break_due: bool,
-    ) -> v.AttemptResult:
-        """Find-the-error: graded on the step picked (given in the highlighted version), the
-        reason chosen and the corrected value; then the correct solution appears beside the
-        shown work. It counts as a review of the card's skill."""
-        step = card.error_step if cur.get("highlighted") else req.error_step
-        if step is None or req.reason is None:
-            raise QueueError("Pick the wrong step and why it is wrong, then type the fix.")
-        grade = grade_find_error(card, step=step, reason=req.reason, value_correct=checked.correct)
-        pending = {
-            **base,
-            "correct": grade.correct,
-            "verdict": "correct" if grade.correct else "incorrect",
-            "verdicts": verdicts,
-            "parsed": _parsed(verdicts),
-            "find_error": {
-                "error_step": card.error_step,
-                "right_reason": next((i for i, r in enumerate(card.reasons) if r.correct), None),
-                "step_ok": grade.step_ok,
-                "reason_ok": grade.reason_ok,
-                "value_ok": grade.value_ok,
-            },
-        }
-        return self._hold(session, plan, item, cur, pending, engine, break_due)
+        return self._hold(session, plan, item, cur, pending, break_due, first=firsts)
 
     def show_solution(self) -> v.AttemptResult:
-        """Self-graded problems: the Show solution button. The solution (and the rubric to
-        tick, if the card has one) appears; then `submit` with `rubric_ticked` (all ticked
-        Good, all but one Hard, fewer Again) or `self_grade` (Matched / Minor slip / Didn't
-        get it). Nothing is graded yet."""
+        """Self-graded problems: the solution (and the rubric to tick) before the student
+        grades it (`submit` with `rubric_ticked` or `self_grade`). Any other problem: only after
+        a wrong first try, and it ends the problem like Give up (the solution is help)."""
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             cur, item = self._current_item(session, plan)
             if item.kind != "problem" or plan.mode == "practice-test":
                 raise QueueError("There is no solution to show here.")
@@ -1586,7 +1241,9 @@ class StudyService:
             if not (
                 any(p.spec.answer_type == "self" for p in specs_for(card)) or cur.get("self_grade")
             ):
-                raise QueueError("This problem is graded automatically.")
+                if int(cur.get("tries", 0)) < 1:
+                    raise QueueError("Try it first. Give up shows the solution.")
+                return self._give_up(session, plan, cur, item, TimingReport())
             if not cur.get("solution_shown"):
                 cur["solution_shown"] = True
                 cur["solution_shown_at"] = self._now()
@@ -1599,78 +1256,81 @@ class StudyService:
                     if card.rubric
                     else "Matched the solution, a minor slip, or didn't get it?"
                 ),
-                solution=self._solution_view(
-                    session, plan, item, engine, correct=False, pending={}
-                ),
+                solution=self._solution_view(session, plan, item, correct=False, pending={}),
                 tries_used=int(cur.get("tries", 0)),
-                attempts_allowed=self._attempts_allowed(plan, item, cur),
+                attempts_allowed=self._attempts_allowed(plan, item),
             )
 
     def give_up(self, timing: TimingReport | Mapping[str, Any] | None = None) -> v.AttemptResult:
+        """Give up: the full solution, and the problem ends (before any answer, its first try
+        counts as a miss)."""
         report = timing if isinstance(timing, TimingReport) else TimingReport.from_dict(timing)
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             cur, item = self._current_item(session, plan)
-            if item.kind != "problem":
-                raise QueueError("Only a problem can be given up.")
-            if cur.get("pending") or cur.get("closed"):
-                raise QueueError("This problem is already answered; continue.")
-            now = self._now()
-            guarded = guard_timing(
-                report, shown_at=cur.get("shown_at"), now_ms=now, saved_active_ms=session.active_ms
-            )
-            session, break_due = self._note_active(session, guarded.timing.active_ms or 0)
-            pending = {
-                "at": now,
-                "correct": False,
-                "gave_up": True,
-                "attempt_number": int(cur.get("tries", 0)) + 1,
-                "hints_used": _hints_used(cur),
-                "last_hint_used": bool(cur.get("last_hint")),
-                "verdict": "gave-up",
-                # The last attempt stays "Your answer" beside the correct one (spec).
-                "verdicts": list(cur.get("last_verdicts") or []),
-                "timing": _timing_json(guarded.timing),
-                "flags": list(guarded.flags),
-            }
-            card = self._card(str(cur["card_id"]))
-            if plan.mode == "practice-test":
-                return self._submit_test(
-                    session, plan, item, cur, card, v.SubmitRequest(), pending, engine
-                )
-            auto = not cur.get("self_grade") and all(
-                p.spec.answer_type != "self" for p in specs_for(card)
-            )
-            if card.parts and auto:  # the parts still open are given up
-                state = {str(k): dict(x) for k, x in dict(cur.get("parts") or {}).items()}
-                outcomes = []
-                for p in card.parts:
-                    entry = state.get(p.label, {})
-                    done = bool(entry.get("final"))
-                    outcomes.append(
-                        PartOutcome(
-                            label=p.label,
-                            skill_id=p.skill_id,
-                            correct=done and bool(entry.get("correct")),
-                            attempts=int(entry.get("tries", 0)) + (0 if done else 1),
-                            gave_up=not done,
-                        )
+            return self._give_up(session, plan, cur, item, report)
+
+    def _give_up(
+        self,
+        session: SessionState,
+        plan: Plan,
+        cur: dict[str, Any],
+        item: PlanItem,
+        report: TimingReport,
+    ) -> v.AttemptResult:
+        if item.kind != "problem":
+            raise QueueError("Only a problem can be given up.")
+        if cur.get("pending") or cur.get("closed"):
+            raise QueueError("This problem is already answered; continue.")
+        now = self._now()
+        guarded = guard_timing(
+            report, shown_at=cur.get("shown_at"), now_ms=now, saved_active_ms=session.active_ms
+        )
+        session, break_due = self._note_active(session, guarded.timing.active_ms or 0)
+        pending: dict[str, Any] = {
+            "at": now,
+            "correct": False,
+            "gave_up": True,
+            "attempt_number": int(cur.get("tries", 0)) + 1,
+            "verdict": "gave-up",
+            # The last try stays "Your answer" beside the solution, with its feedback.
+            "verdicts": list(cur.get("last_verdicts") or []),
+            "timing": _timing_json(guarded.timing),
+            "flags": list(guarded.flags),
+        }
+        card = self._card(str(cur["card_id"]))
+        if plan.mode == "practice-test":
+            return self._submit_test(session, plan, item, cur, card, v.SubmitRequest(), pending)
+        auto = not cur.get("self_grade") and all(
+            p.spec.answer_type != "self" for p in specs_for(card)
+        )
+        if card.parts and auto:  # the parts still open are given up
+            state = {str(k): dict(x) for k, x in dict(cur.get("parts") or {}).items()}
+            outcomes = []
+            for p in card.parts:
+                entry = state.get(p.label, {})
+                done = bool(entry.get("final"))
+                outcomes.append(
+                    PartOutcome(
+                        label=p.label,
+                        skill_id=p.skill_id,
+                        correct=done and bool(entry.get("correct")),
+                        attempts=int(entry.get("tries", 0)) + (0 if done else 1),
+                        gave_up=not done,
                     )
-                facts = card_facts(AnswerFacts(correct=False), outcomes, card.skill_id or "")
-                pending.update(
-                    correct=facts.correct,
-                    gave_up=facts.gave_up,
-                    attempt_number=max(1, facts.attempt_number),
-                    verdict="gave-up"
-                    if facts.gave_up
-                    else "correct"
-                    if facts.correct
-                    else "incorrect",
-                    verdicts=[e["verdict"] for e in state.values() if "verdict" in e],
-                    parts=[o.as_json() for o in outcomes],
                 )
-            return self._hold(session, plan, item, cur, pending, engine, break_due)
+            correct, number, gave_up = _parts_facts(outcomes)
+            pending.update(
+                correct=correct,
+                gave_up=gave_up,
+                attempt_number=max(1, number),
+                verdict="gave-up" if gave_up else "correct" if correct else "incorrect",
+                verdicts=[e["verdict"] for e in state.values() if "verdict" in e],
+                parts=[o.as_json() for o in outcomes],
+            )
+        return self._hold(
+            session, plan, item, cur, pending, break_due, first=int(cur.get("tries", 0)) == 0
+        )
 
     def _hold(
         self,
@@ -1679,12 +1339,18 @@ class StudyService:
         item: PlanItem,
         cur: dict[str, Any],
         pending: dict[str, Any],
-        engine: Engine,
         break_due: bool,
+        *,
+        first: bool | None = None,
     ) -> v.AttemptResult:
-        """Save a final answer in the session row; it is graded on continue or diagnose."""
+        """Save a final answer in the session row; it is committed on continue. `first`:
+        whether this submission was the item's first try (default: the answer's attempt
+        number is 1; a multi-part problem says it itself)."""
+        if first is None:
+            first = int(pending.get("attempt_number", 1)) == 1
+        pending["first_submission"] = first
         cur["pending"] = pending
-        cur["tries"] = int(pending.get("attempt_number", 1))
+        cur["tries"] = max(int(cur.get("tries", 0)), int(pending.get("attempt_number", 1)))
         extra = {k: val for k, val in session.extra.items() if k != "undo"}
         session = self._storage.users.save_session(
             replace(session, current=cur, draft=pending.get("raw_input"), extra=extra)
@@ -1696,236 +1362,237 @@ class StudyService:
             outcome=outcome,
             verdicts=tuple(v.PartVerdictView(**p) for p in pending.get("verdicts", ())),
             message="" if outcome == "correct" else "Here is the full solution.",
-            solution=self._solution_view(
-                session, plan, item, engine, correct=correct, pending=pending
-            ),
+            solution=self._solution_view(session, plan, item, correct=correct, pending=pending),
             tries_used=cur["tries"],
-            attempts_allowed=self._attempts_allowed(plan, item, cur),
+            attempts_allowed=self._attempts_allowed(plan, item),
             break_due=break_due,
-            find_error=_find_error_view(pending),
+            first_try_counted=first,
         )
 
-    def hint(self) -> v.HintReveal:
-        """The next hint of the card's ladder: any hint caps the rating at Hard, the last
-        one (it gives the first step) counts as Again."""
-        with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
-            cur, item = self._current_item(session, plan)
-            if plan.mode == "practice-test":
-                raise QueueError("No hints during a practice test.")
-            if not self._settings(self._today(engine)).hints:
-                raise QueueError("Hints are turned off in Settings.")
-            if cur.get("pending") or cur.get("closed"):
-                raise QueueError("This problem is already answered.")
-            hints = self._card(str(cur["card_id"])).hints
-            shown = int(cur.get("hints", 0))
-            if shown >= len(hints):
-                raise QueueError("No more hints for this problem.")
-            cur["hints"] = shown + 1
-            last = shown + 1 == len(hints)
-            cur["last_hint"] = last
-            self._storage.users.save_session(replace(session, current=cur))
-            return v.HintReveal(
-                item_key=item.key,
-                index=shown + 1,
-                total=len(hints),
-                text=hints[shown],
-                rating_effect="again" if last else "hard",
-            )
-
     def open_example(self) -> None:
-        """The student opened the skill's worked example mid-problem (TIME-5 exclusion)."""
+        """The student opened the skill's worked example mid-problem: help, so the problem's
+        first try counts as aided (and its time is not a valid solving time, TIME-5)."""
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
-            cur, _ = self._current_item(session, plan)
+            session, plan = self._require()
+            cur, item = self._current_item(session, plan)
+            if (item.meta or {}).get("sitting"):
+                raise QueueError("A sitting is closed book.")
             cur["example_opened"] = True
             self._storage.users.save_session(replace(session, current=cur))
 
-    def diagnose(self, choice: str, step: int | None = None) -> v.Diagnosis:
-        """The "What went wrong?" pick after a miss. The answer is graded with it, so the
-        diagnosis flow's hooks see it (error_choice, error_step, didnt_know_start and the
-        slip cap) and their PendingCheck rows land in the re-plan."""
-        with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
-            cur, item = self._current_item(session, plan)
-            pending = dict(cur.get("pending") or {})
-            if not pending or pending.get("correct"):
-                raise QueueError("There is no missed answer to diagnose.")
-            error, error_step, start, slip = _choice(choice, step)
-            pending.update(  # the diagnosis hook decides the slip cap (ADR-0008)
-                error_choice=error,
-                error_step=error_step,
-                didnt_know_start=start,
-            )
-            cur["pending"] = pending
-            session = replace(session, current=cur)
-            before = {i.key for i in plan.items}
-            session, plan, recorded = self._finalize(session, plan, engine)
-            new_checks = [
-                i for i in plan.items if i.key not in before and i.order == CHECK and i.pending
-            ]
-            diag = recorded.attempt.extra.get("diagnosis") if recorded is not None else None
-            accepted = isinstance(diag, dict) and diag.get("slip") == "accepted"
-            skills = engine.catalog().skills
-            names = tuple(
-                skills[i.skill_id].name
-                for i in new_checks
-                if i.skill_id is not None and i.skill_id in skills
-            )
-            if accepted:
-                follow = "Counted as a slip: the miss is recorded, but it doesn't lower your Level."
-            elif new_checks:
-                follow = "A quick check on " + ", ".join(names) + " comes in a few problems."
-            elif recorded is not None and recorded.attempt.rating is None:
-                follow = "Its rating waits for a quick check, which comes next session."
-            elif slip:
-                follow = "The slip allowance is used up for this skill, so it counts as a miss."
-            elif error == "setup":
-                follow = "A worked example comes before this skill's next problem."
-            else:
-                follow = "A fresh problem on this skill comes later."
-            if recorded is not None and recorded.result.effects.confident_error:
-                follow += " You submitted it as sure, so it comes back tomorrow for a second look."
-            return v.Diagnosis(
-                item_key=item.key,
-                choice=choice,
-                follow_up=follow,
-                rating=recorded.attempt.rating if recorded is not None else None,
-                slip_accepted=accepted,
-                checks=names,
-            )
-
     def next(self) -> v.Turn:
-        """Continue: grade the answer on screen if it isn't yet, then the next item."""
+        """Continue: commit the answer on screen if it isn't yet, then the next item."""
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             cur = session.current
             if cur is not None and plan.mode == "practice-test":
-                return self._turn(session, engine)
+                return self._turn(session)
+            message = ""
             if cur is not None:
                 item = plan.item(str(cur["key"]))
                 if cur.get("pending"):
-                    session, plan, _ = self._finalize(session, plan, engine)
+                    before = set(_aside(plan))
+                    session, plan, _ = self._finalize(session, plan)
+                    message = self._set_aside_message(plan, before)
                 elif not cur.get("closed"):
                     if item is not None and item.kind == "example":
-                        cur = {
-                            **cur,
-                            "pending": {
-                                "at": self._now(),
-                                "correct": False,
-                                "verdict": "shown",
-                                "timing": {},
-                            },
+                        shown = {
+                            "at": self._now(),
+                            "correct": False,
+                            "verdict": "shown",
+                            "timing": {},
                         }
                         session, plan, _ = self._finalize(
-                            replace(session, current=cur), plan, engine
+                            replace(session, current={**cur, "pending": shown}), plan
                         )
                     elif item is not None and item.kind == "flashcard":
                         raise QueueError("Rate the flashcard first.")
                     else:
                         raise QueueError("Submit an answer or give up first.")
-            session = self._advance(session, plan, engine)
-            return self._turn(session, engine)
+            session = self._advance(session, plan)
+            return self._turn(session, message=message)
 
-    # ================================================================ grading
+    def _set_aside_message(self, plan: Plan, before: set[str]) -> str:
+        """A skill the re-plan set aside for today (the stuck ladder's third rung): "{name} is
+        set aside for today. See {book} §{section}." (Turn.message on the next turn)."""
+        catalog = self._practice.catalog()
+        return " ".join(
+            set_aside_line(catalog.name(k), catalog.textbooks.get(k))
+            for k in _aside(plan)
+            if k not in before
+        )
 
-    def _outcome(
+    # ================================================================ committing
+
+    def _attempt_row(
         self,
         session: SessionState,
         plan: Plan,
         item: PlanItem,
         cur: Mapping[str, Any],
+        pending: Mapping[str, Any],
+        card: Card,
         *,
-        facts: AnswerFacts,
-        timing: TimingFacts,
-        at: int,
-        raw: str | None = None,
-        parsed: str | None = None,
-        verdict: str | None = None,
-        error_choice: str | None = None,
-        error_step: int | None = None,
-        matched_wrong: int | None = None,
-        flags: Sequence[str] = (),
-        parts: Sequence[Mapping[str, Any]] = (),
-        find_error: Mapping[str, Any] | None = None,
-    ) -> ProblemOutcome:
-        card = self._card(str(cur["card_id"]))
-        ref = self._ref(card)
+        final: bool,
+        part: str | None = None,
+    ) -> Attempt:
+        """The attempt row of one try (final or not), with what the planner chose."""
+        timing = TimingFacts(**pending.get("timing", {}))
+        meta = item.meta or {}
+        verdict = str(
+            pending.get("verdict") or ("correct" if pending.get("correct") else "incorrect")
+        )
+        number = int(pending.get("attempt_number", 1))
+        correct = bool(pending.get("correct"))
+        source = self._storage.packs.card_source(card.id) or "user"
         extra: dict[str, Any] = {"queue_mode": plan.mode, "item": item.key}
-        if find_error:
-            extra["find_error"] = dict(find_error)
-        if cur.get("highlighted"):
-            extra["highlighted"] = True
-        if item.check_id is not None:
-            extra["check_id"] = item.check_id
-            if item.check_kind == "cued-twin":
-                extra["cued"] = True  # shown with its cued stem (the method named)
-        if flags:
-            extra["timing_flags"] = list(flags)
+        if item.meta is not None:
+            extra["plan"] = {
+                "course": item.course_id,
+                "skill": item.skill_id,
+                "problem": meta.get("problem"),
+                "block": bool(meta.get("block")),
+                "priority": meta.get("priority"),
+                "reason": meta.get("reason"),
+                "minutes": meta.get("minutes"),
+                "tier": meta.get("tier"),
+                "time_limit": meta.get("time_limit"),
+            }
+        if pending.get("parts"):
+            extra["parts"] = list(pending["parts"])
+        if verdict in ("self", "undecided"):
+            extra["correct"] = correct
+        if cur.get(UNDO_AFTER_SOLUTION):
+            extra["solution_seen"] = True  # ADR-0019 item 7: aided
+        if pending.get("flags"):
+            extra["timing_flags"] = list(pending["flags"])
         if cur.get("undecided"):
             extra["grader_review"] = True
-        return ProblemOutcome(
-            card=ref,
-            facts=facts,
-            at=at,
-            timing=timing,
+        if pending.get("unanswered"):
+            extra["unanswered"] = True
+        solution_seen = bool(cur.get(UNDO_AFTER_SOLUTION))
+        standard = meta.get("standard")
+        target = None if standard is None else round(float(standard) * MINUTE_MS)
+        valid = None
+        if (
+            number == 1
+            and correct
+            and part is None
+            and not pending.get("parts")
+            and verdict == "correct"
+            and not solution_seen
+        ):
+            if item.purpose == "sitting" and item.meta is not None:
+                valid = sitting_minutes(
+                    timing,
+                    shown_at=cur.get("shown_at"),
+                    submitted_at=int(pending["at"]),
+                    untimed=session.untimed,
+                    interrupted=bool(cur.get("interrupted") or cur.get("example_opened")),
+                    tier=card.tier,
+                    target_ms=target,
+                )
+            else:
+                valid = valid_minutes(
+                    timing,
+                    untimed=session.untimed,
+                    example_opened=bool(cur.get("example_opened")),
+                    tier=card.tier,
+                    target_ms=target,
+                )
+        capped = None
+        if timing.active_ms is not None:
+            capped = min(timing.active_ms, cap_ms(target, card.tier))
+        # Problems and the new skill's worked example carry the planner's role (the planner
+        # reads a served example back as its block's); flashcards and older plans' items none.
+        role = item.purpose if item.meta is not None and item.kind != "flashcard" else None
+        return Attempt(
+            at=int(pending["at"]),
             shown_at=cur.get("shown_at"),
-            purpose=cast(Purpose, item.purpose),
-            # Only a problem served as a stretch is one (unrated, ADR-0014); a review whose
-            # pick had to widen its tiers is still the skill's review. Practice tests keep
-            # the band rule (exam-tier problems above it stay unrated).
-            stretch=True
-            if cur.get("stretch")
-            else (None if plan.mode == "practice-test" else False),
-            untimed=session.untimed,
-            lighter_set=plan.lighter,
-            example_opened=bool(cur.get("example_opened")),
-            verdict=cast(Any, verdict),
-            pack_id=None if ref.source == "user" else ref.source,
-            session=session,
+            session_id=session.id,
             presentation_id=str(cur["presentation_id"]),
+            card_id=card.id,
+            card_rev=card.rev,
+            pack_id=None if source == "user" else source,
+            card_kind=card.kind,
+            skill_id=card.skill_id,
+            part=part,
+            tier=card.tier,
+            seed=card.seed,
+            template_id=card.template_id,
             reason_tag=item.tag,
-            triage_policy=plan.policy,
-            raw_input=raw,
-            parsed=parsed,
-            error_choice=cast(ErrorChoice | None, error_choice),
-            error_step=error_step,
-            matched_wrong=matched_wrong,
+            raw_input=pending.get("raw_input"),
+            parsed=pending.get("parsed"),
+            verdict=cast(Any, verdict),
+            attempt_number=number,
+            final=final,
+            example_opened=bool(cur.get("example_opened")),
+            confidence="unsure" if pending.get("unsure") else "sure",
+            guessed=bool(pending.get("guessed")),
+            too_easy=bool(pending.get("too_easy")),
+            active_ms=timing.active_ms,
+            solve_ms=timing.solve_ms,
+            entry_ms=timing.entry_ms,
+            raw_ms=timing.raw_ms,
+            capped_ms=capped,
+            pause_count=timing.pause_count,
+            longest_pause_ms=timing.longest_pause_ms,
+            after_wake=timing.after_wake,
+            untimed=session.untimed,
+            matched_wrong=pending.get("matched_wrong"),
             app_version=self._app_version,
-            check_of=item.check_id,
             extra=extra,
-            parts=tuple(PartOutcome.from_json(dict(p)) for p in parts),
+            role=cast(Any, role),
+            milestone=meta.get("milestone") if role else None,
+            missed=bool(meta.get("missed")) if role else None,
+            plan_p=meta.get("p") if role else None,
+            ladder=int(meta.get("ladder") or 0) if role else None,
+            sitting=meta.get("sitting") if role else None,
+            learner_version=meta.get("version") if role else None,
+            valid_minutes=valid,
         )
 
+    def _record_try(
+        self,
+        session: SessionState,
+        plan: Plan,
+        item: PlanItem,
+        cur: dict[str, Any],
+        card: Card,
+        wrong: Mapping[str, Any],
+        *,
+        part: str | None = None,
+    ) -> Attempt:
+        """A wrong try that leaves the problem open: committed at once with the session row
+        (rule 5). A first try is the problem's observation: the learner takes it now."""
+        trying = replace(
+            session,
+            current=cur,
+            draft=None,
+            extra={k: val for k, val in session.extra.items() if k != "undo"},
+        )
+        row = self._attempt_row(trying, plan, item, cur, wrong, card, final=False, part=part)
+        stored = self._storage.users.record_answer(GradedAnswer(attempt=row, session=trying))
+        if stored.id is not None:
+            self._practice.record(stored.id)
+        return stored
+
     def _finalize(
-        self, session: SessionState, plan: Plan, engine: Engine
-    ) -> tuple[SessionState, Plan, Any]:
-        """Grade the saved answer on screen (one transaction with the session row), then
-        plan its follow-ups. Returns the session, the plan and the engine's Recorded."""
+        self, session: SessionState, plan: Plan, *, replan: bool = True
+    ) -> tuple[SessionState, Plan, Attempt]:
+        """Commit the answer held on screen: the final attempt row and the session row in one
+        transaction; then the learner takes it, and (in a daily session of today) the rest of
+        the day is planned again. A crash between the two writes is finished on resume."""
+        users = self._storage.users
         cur = dict(session.current or {})
         pending = dict(cur.get("pending") or {})
         item = plan.item(str(cur["key"]))
         if item is None or not pending:
             raise QueueError("Nothing to grade.")
-        facts = AnswerFacts(
-            correct=bool(pending.get("correct")),
-            attempt_number=int(pending.get("attempt_number", 1)),
-            hints_used=int(pending.get("hints_used", 0)),
-            last_hint_used=bool(pending.get("last_hint_used")),
-            gave_up=bool(pending.get("gave_up")),
-            unsure=bool(pending.get("unsure")),
-            guessed=bool(pending.get("guessed")),
-            too_easy=bool(pending.get("too_easy")),
-            didnt_know_start=bool(pending.get("didnt_know_start")),
-            slip_within_cap=bool(pending.get("slip_within_cap")),
-            self_grade=pending.get("self_grade"),
-            rubric_total=pending.get("rubric_total"),
-            rubric_ticked=pending.get("rubric_ticked"),
-        )
+        card = self._card(str(cur["card_id"]))
+        # Final: the presentation is complete. A worked example (or a problem shown solved in
+        # its place) is a final "shown" row, never an observation.
+        row = self._attempt_row(session, plan, item, cur, pending, card, final=True)
         undo = {
             "presentation_id": cur["presentation_id"],
             "key": item.key,
@@ -1933,271 +1600,67 @@ class StudyService:
             "plan": session.plan,
             "position": session.position,
         }
-        marked = plan.updated(replace(item, status="done", result={"answered_at": pending["at"]}))
+        result = {
+            "answered_at": pending["at"],
+            "verdict": pending.get("verdict"),
+            "correct": None if item.kind != "problem" else _first_try_success(cur, pending, item),
+            "card_id": card.id,
+            "skill_id": item.skill_id,
+            "active_ms": _presentation_ms(users.attempts(session_id=session.id), cur, pending),
+        }
+        if item.purpose == "sitting":
+            # The sitting clock this problem used up: its counted time (the wall clock plus
+            # the typing allowance), or the bare wall clock when that time is unknown.
+            counted = row.valid_minutes
+            wall = sitting_ms(cur.get("shown_at"), int(pending["at"])) or 0
+            result["sitting_ms"] = round(counted * MINUTE_MS) if counted is not None else wall
+        marked = plan.updated(replace(item, status="done", result=result))
         closed = {**cur, "pending": None, "closed": True, "answer": pending}
-        extra = {**session.extra, "undo": undo, "replan": item.key}
+        extra = {**session.extra, "undo": undo}
+        if replan:
+            extra["replan"] = item.key
         graded = replace(session, plan=marked.to_json(), current=closed, extra=extra)
-        outcome = self._outcome(
-            graded,
-            plan,
-            item,
-            closed,
-            facts=facts,
-            timing=TimingFacts(**pending.get("timing", {})),
-            at=int(pending["at"]),
-            raw=pending.get("raw_input"),
-            parsed=pending.get("parsed"),
-            verdict=pending.get("verdict"),
-            error_choice=pending.get("error_choice"),
-            error_step=pending.get("error_step"),
-            matched_wrong=pending.get("matched_wrong"),
-            flags=pending.get("flags", ()),
-            parts=pending.get("parts", ()),
-            find_error=pending.get("find_error"),
+        stored = users.record_answer(GradedAnswer(attempt=row, session=graded))
+        if stored.id is not None:
+            self._practice.record(stored.id)
+        closed["attempt_id"] = stored.id
+        new_plan = self._replan(graded, marked, item.key) if replan else marked
+        extra.pop("replan", None)
+        if item.kind == "problem" and item.purpose == "new" and result["correct"] and item.skill_id:
+            extra["learned"] = [*extra.get("learned", []), item.skill_id]
+        saved = users.save_session(
+            replace(graded, plan=new_plan.to_json(), current=closed, extra=extra)
         )
-        recorded = engine.grade(outcome)
-        new_plan, new_extra = self._after_answer(
-            graded, marked, item.key, recorded.attempt, recorded.result, engine
-        )
-        new_extra.pop("replan", None)
-        closed["attempt_id"] = recorded.attempt.id
-        # The engine's decision (ENG miss flow): only a miss submitted sure is a confident
-        # error with a guaranteed next-day redo. The solution view reads it from here.
-        closed["confident_error"] = bool(recorded.result.effects.confident_error)
-        saved = self._storage.users.save_session(
-            replace(graded, plan=new_plan.to_json(), current=closed, extra=new_extra)
-        )
-        return saved, new_plan, recorded
+        return saved, new_plan, stored
 
-    def _after_answer(
-        self,
-        session: SessionState,
-        plan: Plan,
-        key: str,
-        attempt: Attempt,
-        result: GradeResult | None,
-        engine: Engine,
-    ) -> tuple[Plan, dict[str, Any]]:
-        """The re-plan after an answer (also run on resume after a crash, with result None:
-        the follow-ups are then read from the stored attempt and skill row)."""
-        users = self._storage.users
-        extra = dict(session.extra)
-        item = plan.item(key)
-        if item is None or key in plan.replanned:
-            return plan, extra
-        effects: Effects | None = result.effects if result is not None else None
-        stage = attempt.extra.get("stage")
-        success = (
-            result.decision.success
-            if result is not None
-            else attempt.verdict == "correct" or (attempt.rating or 0) >= 2
-        )
-        skill_id = attempt.skill_id or item.skill_id
-        state = users.skill_state(skill_id) if skill_id else None
-        learned = (
-            effects.learned
-            if effects is not None
-            else state is not None and state.learned_at == attempt.at
-        )
-        if learned and skill_id:
-            extra["learned"] = [*extra.get("learned", []), skill_id]
-        res = {
-            "attempt_id": attempt.id,
-            "verdict": attempt.verdict,
-            "rating": attempt.rating,
-            "correct": bool(success) if item.kind == "problem" else None,
-            "stage": stage,
-            "card_id": attempt.card_id,
-            "skill_id": skill_id,
-            "active_ms": attempt.active_ms,
-            "learned": bool(learned),
-        }
-        snap = gather_light(self, engine, date.fromisoformat(session.study_day), plan)
-        inserted: list[PlanItem] = []
-        drop: set[str] = set()
-        if item.kind == "problem" and plan.mode != "practice-test" and skill_id:
-            reinforce = (
-                effects.reinforcement_due
-                if effects is not None
-                else attempt.rating == 1 and stage == "review" and not (state and state.leech)
-            )
-            if reinforce and item.purpose != "reinforcement":
-                plan, k = plan.next_key("rf")
-                inserted.append(
-                    snap.make(
-                        k,
-                        skill_id,
-                        order=RELEARN,
-                        tag="relearn",
-                        variant="relearn.reinforcement",
-                        purpose="reinforcement",
-                        anchor=key,
-                        gap=5,
-                    )
-                )
-            # A stretch problem is unrated (ADR-0014): the skill's core-band review is owed
-            # and comes the next study day, never a few items after the stretch's worked
-            # solution (the engine keeps the skill due from tomorrow).
-            if not success:
-                # QUE-2: a flashcard on the missed skill right after the solution: one
-                # already planned for later moves up; otherwise one more if the limit allows.
-                planned = next(
-                    (i for i in plan.pending if i.kind == "flashcard" and i.skill_id == skill_id),
-                    None,
-                )
-                if planned is not None:
-                    drop.add(planned.key)
-                    inserted.append(
-                        flashcard_item(
-                            snap.snap,
-                            planned.card_id or "",
-                            planned.card_ord,
-                            skill_id,
-                            refresher=True,
-                        )
-                    )
-                elif plan.flashcards > 0:
-                    refresher = self._refresher(skill_id, plan)
-                    if refresher is not None:
-                        inserted.append(
-                            flashcard_item(snap.snap, refresher, 0, skill_id, refresher=True)
-                        )
-                        plan = replace(plan, flashcards=plan.flashcards - 1)
-        if item.block is not None and skill_id:
-            step = learning_step(state, date.fromisoformat(session.study_day))
-            block_left = [i for i in plan.pending if i.block == item.block]
-            if memory_of(state) is not None or step in ("waiting", "none"):
-                drop |= {i.key for i in block_left}
-            elif step == "problem" and not any(i.kind == "problem" for i in block_left):
-                plan, k = plan.next_key("lp")
-                inserted.append(
-                    snap.make(
-                        k,
-                        skill_id,
-                        order=LEARNING,
-                        tag="new-skill",
-                        variant="new-skill.continue",
-                        tier=1.5,
-                        block=item.block,
-                    )
-                )
-        # Checks and diagnostic sets the diagnosis flow made (or resolved) meanwhile.
-        if plan.mode not in ("practice-test",):
-            ins, gone = self._sync_checks(plan, snap, attempt, key)
-            inserted += ins
-            drop |= gone
-        res["inserted"] = [i.key for i in inserted]
-        plan = plan.updated(replace(item, result=res))
-        plan = self._rebalance(plan, inserted, drop, item.course_id, engine)
+    def _replan(self, session: SessionState, plan: Plan, key: str) -> Plan:
+        """After an answer in today's daily session: the rest of the day, planned again from
+        the items served today (the planner's ladder, blocks that end at a success, growth
+        that stops after two in a row)."""
+        if key in plan.replanned:
+            return plan
         plan = replace(plan, replanned=(*plan.replanned, key))
-        return plan, extra
+        if plan.mode != DAILY or plan.day != self._today().isoformat():
+            return plan
+        return self._with_plan(plan, self._fresh_plan(plan))
 
-    def _rebalance(
-        self,
-        plan: Plan,
-        inserted: Sequence[PlanItem],
-        drop: set[str],
-        course: str | None,
-        engine: Engine,
-    ) -> Plan:
-        """rebalance, then drop anchored items that can't reach their distance (a check
-        stays pending in storage for the next session; a reinforcement is not needed then:
-        the relearning review comes tomorrow)."""
-        confusable = self._confusable(engine)
-        out = rebalance(
-            plan, inserted=inserted, drop=drop, prefer_course=course, confusable=confusable
-        )
-        short = _short_anchors(out)
-        if short:
-            out = rebalance(out, drop=short, prefer_course=course, confusable=confusable)
-        return out
+    def _fresh_plan(self, plan: Plan) -> PracticePlan:
+        day = date.fromisoformat(plan.day)
+        return self._practice.plan_day(day, self._now(), self._practice.served(day))
 
-    def _refresher(self, skill_id: str, plan: Plan) -> str | None:
-        """QUE-2: a flashcard linked to the missed skill, right after the solution."""
-        marks = self._storage.users.card_marks()
-        in_plan = {i.card_id for i in plan.items if i.kind == "flashcard"}
-        for ref in self._storage.packs.card_refs(skill_id=skill_id):
-            mark = marks.get(ref.id)
-            if (
-                ref.kind == "flashcard"
-                and ref.status == "active"
-                and ref.id not in in_plan
-                and not (mark and (mark.hidden or mark.suspended))
-            ):
-                return ref.id
-        return None
-
-    def _sync_checks(
-        self, plan: Plan, snap: _Light, attempt: Attempt, key: str
-    ) -> tuple[list[PlanItem], set[str]]:
-        """Checks the diagnosis flow made (or resolved, or cancelled) since the last answer.
-        A check whose miss is in this session waits `after_items` items after it; one from an
-        earlier session has no anchor."""
-        users = self._storage.users
-        now = self._now()
-        pending = {c.id: c for c in users.pending_checks("pending") if c.id is not None}
-        planned = {i.check_id for i in plan.items if i.check_id is not None}
-        by_attempt = {
-            (i.result or {}).get("attempt_id"): i.key for i in plan.items if not i.pending
-        }
-        by_attempt[attempt.id] = key
-        fresh = [
-            c
-            for c in queue_order(pending.values())
-            if c.id not in planned and (c.not_before_at is None or c.not_before_at <= now)
-        ]
-        reason_of = Diagnosis(self._storage).reason if fresh else None
-        inserted = []
-        for n, check in enumerate(fresh):
-            anchor = by_attempt.get(check.attempt_id)
-            missed = attempt.skill_id if anchor == key else check.skill_id
-            name = snap.snap.skill_name(missed)
-            diagnostic = check.kind == "diagnostic"
-            inserted.append(
-                snap.make(
-                    f"chk:{check.id}",
-                    check.skill_id,
-                    order=CHECK,
-                    rank=-1.0 + n / 1000,
-                    tag="check",
-                    variant="check.diagnostic" if diagnostic else "check",
-                    why_text=reason_of(check) if reason_of is not None else None,
-                    label="Check" if diagnostic else f"Check (after a miss on {name})",
-                    tier=2.0,
-                    course=snap.snap.course_of(attempt.skill_id) if anchor else None,
-                    anchor=anchor,
-                    gap=max(check.after_items, CHECK_GAP) if anchor else 0,
-                    check_id=check.id,
-                    check_kind=check.kind,
-                    card_id=check.card_id,
-                )
-            )
-        gone = {i.key for i in plan.pending if i.check_id is not None and i.check_id not in pending}
-        return inserted, gone
-
-    def _bookkeeping_hook(
-        self, ctx: SkillContext, outcome: ProblemOutcome, result: GradeResult
-    ) -> GradeResult:
-        """Without the diagnosis flow (diagnosis=False): resolve the check this answer was
-        served for, so it isn't served again."""
-        check_id = outcome.check_of
-        if check_id is None or any(
-            isinstance(c, PendingCheck) and c.id == check_id for c in result.answer.changes
-        ):
-            return result
-        check = next(
-            (c for c in self._storage.users.pending_checks("pending") if c.id == check_id), None
-        )
-        if check is None:
-            return result
-        resolved = replace(
-            check,
-            status="passed" if result.decision.success else "failed",
-            resolved_at=outcome.at,
-            resolved_by=THIS_ATTEMPT,
-        )
-        answer = replace(result.answer, changes=(*result.answer.changes, resolved))
-        return replace(result, answer=answer)
+    def _with_plan(self, plan: Plan, planned: PracticePlan) -> Plan:
+        """The plan's pending problems replaced by the planner's; flashcards placed between
+        them again (a missed flashcard still at least five items after its miss)."""
+        done = [i for i in plan.items if not i.pending]
+        pending = [i for i in plan.items if i.pending]
+        flash = [i for i in pending if i.kind == "flashcard" and i.anchor is None]
+        reshows = [i for i in pending if i.kind == "flashcard" and i.anchor is not None]
+        plan, problems = self._problem_items(planned, plan)
+        tail = place_flashcards(problems, flash)
+        for item in reshows:
+            tail = _insert_reshow(done, tail, item)
+        info = {**plan.info, "summary": self._summary_info(planned)}
+        return replace(plan, items=(*done, *tail), n=len(done) + len(problems), info=info)
 
     # ================================================================ flashcards
 
@@ -2212,8 +1675,7 @@ class StudyService:
         """Again/Hard/Good/Easy (keys 1-4), or a typed answer graded by the checker."""
         report = timing if isinstance(timing, TimingReport) else TimingReport.from_dict(timing)
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             cur, item = self._current_item(session, plan)
             if item.kind != "flashcard":
                 raise QueueError("The item on screen is not a flashcard.")
@@ -2237,6 +1699,7 @@ class StudyService:
             )
             session, _ = self._note_active(session, guarded.timing.active_ms or 0)
             users = self._storage.users
+            engine = self.engine()
             state = users.flashcard_state(card.id, item.card_ord)
             adapter = engine.adapter_for_card(card.id)
             new_state, event, recall = grade_flashcard(
@@ -2246,8 +1709,8 @@ class StudyService:
                 rating=rating,
                 at_ms=now,
                 adapter=adapter,
-                days=engine.days(),
-                leech_lapses=int(users.get_setting("leech.flashcard_lapses", 8)),
+                days=self._practice.days(),
+                leech_lapses=int(self._setting("leech.flashcard_lapses", 8)),
             )
             undo = {
                 "presentation_id": cur["presentation_id"],
@@ -2273,7 +1736,9 @@ class StudyService:
                     purpose="relearn",
                     why=why("flashcard.reshow"),
                 )
-                marked = rebalance(marked, inserted=[reshow], refill=False)
+                done = [i for i in marked.items if not i.pending]
+                tail = _insert_reshow(done, [i for i in marked.items if i.pending], reshow)
+                marked = replace(marked, items=(*done, *tail))
             closed = {**cur, "closed": True, "answer": {"at": now, "rating": rating}}
             graded = replace(
                 session,
@@ -2281,7 +1746,7 @@ class StudyService:
                 current=closed,
                 extra={**session.extra, "undo": undo},
             )
-            ref = self._ref(card)
+            source_pack = self._storage.packs.card_source(card.id) or "user"
             attempt = Attempt(
                 at=now,
                 shown_at=cur.get("shown_at"),
@@ -2289,7 +1754,7 @@ class StudyService:
                 presentation_id=str(cur["presentation_id"]),
                 card_id=card.id,
                 card_rev=card.rev,
-                pack_id=None if ref.source == "user" else ref.source,
+                pack_id=None if source_pack == "user" else source_pack,
                 card_kind=card.kind,
                 skill_id=card.skill_id,
                 part=None if item.card_ord == 0 else str(item.card_ord),
@@ -2304,7 +1769,6 @@ class StudyService:
                 predicted_recall=None if recall is None else min(1.0, max(0.0, recall)),
                 params_id=adapter.params_id,
                 rules_version=event.rules_version,
-                triage_policy=plan.policy,
                 app_version=self._app_version,
                 extra={
                     "queue_mode": plan.mode,
@@ -2335,32 +1799,33 @@ class StudyService:
     # ================================================================ undo, dispute, report
 
     def undo(self) -> v.Turn:
-        """QUE-15: roll back the last answer (attempt, rating, FSRS state, Elo) in one
-        transaction and show the problem again. Refused, with a message, once a later
-        answer was submitted or the rows changed since (storage refuses inexact undos)."""
+        """QUE-15: roll back the last answer (its attempt rows; a flashcard's FSRS state) in
+        one transaction and show the problem again. Refused, with a message, once a later
+        answer was submitted or the rows changed since. The learner replays the shorter log."""
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             users = self._storage.users
             cur = dict(session.current or {})
-            if cur.get("pending"):  # on the verdict screen, not graded yet
+            if cur.get("pending"):  # on the verdict screen, not committed yet
                 pending = cur["pending"]
                 fresh = {
                     **cur,
                     "pending": None,
                     "tries": 0,
                     "parts": None,
+                    "last_verdicts": None,
                     "solution_shown": False,
-                    "hints": 0,
-                    "last_hint": False,
+                    "self_grade": False,
+                    "undecided": False,
                     "presentation_id": _uid(),
                     "shown_at": self._now(),
-                    # ADR-0019 item 7: the solution was on screen, so a re-answer is never
-                    # a clean Good.
+                    # ADR-0019 item 7: the solution was on screen after a first try that was
+                    # not a clean success, so the re-answer is aided (undo never erases a miss).
                     UNDO_AFTER_SOLUTION: bool(
                         cur.get(UNDO_AFTER_SOLUTION)
                         or cur.get("solution_shown")
-                        or not (isinstance(pending, dict) and pending.get("correct"))
+                        or cur.get("example_opened")
+                        or _missed_first(pending)
                     ),
                 }
                 restored = replace(session, current=fresh, draft=None)
@@ -2370,9 +1835,7 @@ class StudyService:
                 else:
                     users.save_session(restored)
                 return self._turn(
-                    users.session(_id(session)) or restored,
-                    engine,
-                    message="Undone. The problem is back.",
+                    users.session(_id(session)) or restored, message="Undone. The problem is back."
                 )
             snap = session.extra.get("undo")
             if not snap:
@@ -2382,29 +1845,30 @@ class StudyService:
                     if answered
                     else "There is no answer to undo."
                 )
-                return self._turn(session, engine, message=message)
+                return self._turn(session, message=message)
             last = users.last_attempt()
             if last is None or last.presentation_id != snap["presentation_id"]:
                 return self._turn(
-                    session,
-                    engine,
-                    message="Undo is only available until the next answer is submitted.",
+                    session, message="Undo is only available until the next answer is submitted."
                 )
             old = Plan.from_json(snap["plan"])
             item = old.item(str(snap["key"]))
             if item is None:
-                return self._turn(session, engine, message="There is no answer to undo.")
+                return self._turn(session, message="There is no answer to undo.")
             extra = {k: val for k, val in session.extra.items() if k not in ("undo", "replan")}
             undone = plan.item(item.key)
-            if undone is not None and (undone.result or {}).get("learned"):
+            if undone is not None and item.skill_id in extra.get("learned", []):
                 extra["learned"] = [k for k in extra.get("learned", []) if k != item.skill_id]
             undone_card = self._card(str(snap["card_id"]))
-            # ADR-0019 item 7: a graded miss showed its solution; so did a self-graded one.
-            solution_seen = bool(
-                cur.get(UNDO_AFTER_SOLUTION)
-                or cur.get("solution_shown")
-                or last.verdict != "correct"
-            )
+            # ADR-0019 item 7, from the presentation's rows (the session has moved on to the
+            # next item): a first try that was not a clean success brings the problem back
+            # aided, so undo never turns a miss into a fresh first try.
+            group = [
+                a
+                for a in users.attempts(session_id=session.id)
+                if a.presentation_id == snap["presentation_id"]
+            ]
+            solution_seen = any(_row_missed(a) for a in group)
             current = {
                 "key": item.key,
                 "card_id": snap["card_id"],
@@ -2412,22 +1876,11 @@ class StudyService:
                 "presentation_id": _uid(),
                 "shown_at": self._now(),
                 "tries": 0,
-                "hints": 0,
-                "last_hint": False,
                 "example_opened": False,
-                "stretch": item.stretch,
                 "pending": None,
                 "closed": False,
-                UNDO_AFTER_SOLUTION: solution_seen,
+                UNDO_AFTER_SOLUTION: solution_seen and item.kind == "problem",
             }
-            if undone_card.kind == "find-error" and undone_card.skill_id:
-                current["highlighted"] = find_error_highlighted(
-                    [
-                        a
-                        for a in users.attempts(skill_id=undone_card.skill_id)
-                        if a.presentation_id != snap["presentation_id"]
-                    ]
-                )
             restored = replace(
                 session,
                 plan=old.to_json(),
@@ -2441,23 +1894,18 @@ class StudyService:
                 users.undo_last_answer(session=restored)
             except NothingToUndoError, UndoConflictError:
                 return self._turn(
-                    session,
-                    engine,
-                    message="That answer can't be undone exactly any more, so it stays.",
+                    session, message="That answer can't be undone exactly any more, so it stays."
                 )
             return self._turn(
-                users.session(_id(session)) or restored,
-                engine,
-                message="Undone. The problem is back.",
+                users.session(_id(session)) or restored, message="Undone. The problem is back."
             )
 
     def flag(self, kind: str, note: str | None = None) -> v.FlagResult:
-        """too_easy (before continuing), dispute ("I was right": the attempt doesn't count,
-        logged), report (hide the card at once, the attempt leaves scheduling), flag (a note
+        """too_easy (logged with the answer), dispute ("I was right": the attempt doesn't
+        count, logged), report (hide the card at once, the attempt doesn't count), flag (a note
         for later), suspend (never serve the card)."""
         with self._locked():
-            engine = self.engine()
-            session, plan = self._require(engine)
+            session, plan = self._require()
             cur, item = self._current_item(session, plan)
             users = self._storage.users
             card = self._card(str(cur["card_id"]))
@@ -2473,7 +1921,7 @@ class StudyService:
                 return v.FlagResult(ok=True, message="Marked too easy.")
             if kind in ("dispute", "report"):
                 reason: VoidReason = "dispute" if kind == "dispute" else "report"
-                return self._void_answer(session, plan, item, cur, card, reason, note, engine)
+                return self._void_answer(session, plan, item, cur, card, reason, note)
             if kind in ("flag", "suspend"):
                 mark = users.card_mark(card.id) or CardMark(card_id=card.id)
                 if kind == "flag":
@@ -2481,16 +1929,14 @@ class StudyService:
                     return v.FlagResult(ok=True, message="Flagged for later.")
                 users.set_card_mark(replace(mark, suspended=True))
                 if not cur.get("pending") and not cur.get("closed") and not cur.get("tries"):
-                    self._repick(session, plan, item, engine)
+                    self._repick(session, plan)
                 return v.FlagResult(ok=True, message="Suspended: this problem won't come back.")
             raise QueueError(f"unknown flag {kind!r}")
 
-    def _repick(self, session: SessionState, plan: Plan, item: PlanItem, engine: Engine) -> None:
-        """A different problem for the item on screen (its card was reported or suspended
-        before it was answered)."""
-        fresh = replace(item, card_id=None) if item.check_id is None else item
-        plan = plan.updated(fresh)
-        self._advance(replace(session, current=None), plan, engine)
+    def _repick(self, session: SessionState, plan: Plan) -> None:
+        """Another item in place of the one on screen (its card was reported or suspended
+        before it was answered): the planner leaves that card out now."""
+        self._advance(replace(session, current=None), plan)
 
     def _void_answer(
         self,
@@ -2501,7 +1947,6 @@ class StudyService:
         card: Card,
         reason: VoidReason,
         note: str | None,
-        engine: Engine,
     ) -> v.FlagResult:
         users = self._storage.users
         message = (
@@ -2510,23 +1955,8 @@ class StudyService:
             else "Reported and hidden. This attempt won't count."
         )
         pending = cur.get("pending")
-        if pending:  # never graded: log it as an unrated attempt, voided, with the record
-            outcome = self._outcome(
-                session,
-                plan,
-                item,
-                cur,
-                facts=AnswerFacts(
-                    correct=bool(pending.get("correct")),
-                    attempt_number=int(pending.get("attempt_number", 1)),
-                ),
-                timing=TimingFacts(**pending.get("timing", {})),
-                at=int(pending["at"]),
-                raw=pending.get("raw_input"),
-                verdict=pending.get("verdict"),
-            )
-            ctx = engine.context(card.skill_id or "", card_id=card.id, at_ms=int(pending["at"]))
-            answer = record_try(ctx, outcome)
+        if pending:  # never committed: log it with its tries, voided, with the record
+            row = self._attempt_row(session, plan, item, cur, pending, card, final=True)
             res = {"correct": None, "voided": reason, "verdict": pending.get("verdict")}
             marked = plan.updated(replace(item, status="done", result=res))
             closed = {**cur, "pending": None, "closed": True, "answer": pending}
@@ -2542,23 +1972,10 @@ class StudyService:
                 if a.presentation_id == cur["presentation_id"] and a.id is not None
             ]
 
-            def write(u: Any) -> int:
-                stored = u.record_answer(replace(answer, session=None))
+            def write(u: Any) -> None:
+                stored = u.record_answer(GradedAnswer(attempt=row))
                 u.void_attempts([*tries, stored.id], reason=reason, note=note, session=after)
-                if reason == "dispute":
-                    u.add_dispute(
-                        Dispute(attempt_id=stored.id, raw_input=pending.get("raw_input"), note=note)
-                    )
-                else:
-                    u.add_report(
-                        Report(
-                            card_id=card.id,
-                            card_rev=card.rev,
-                            attempt_id=stored.id,
-                            reason=note or "",
-                        )
-                    )
-                return int(stored.id)
+                self._log_flag(u, reason, card, stored.id, pending.get("raw_input"), note)
 
             users.atomic(write)
             return v.FlagResult(ok=True, message=message, attempt_counts=False)
@@ -2573,12 +1990,7 @@ class StudyService:
         if cur.get("closed") and graded_here and last is not None:
             res = dict(item.result or {})
             res.update(correct=None, voided=reason)
-            drop = [i for i in res.get("inserted", ()) if (plan.item(i) or item).pending]
-            marked = rebalance(
-                plan.updated(replace(item, result=res)),
-                drop=drop,
-                confusable=self._confusable(engine),
-            )
+            marked = plan.updated(replace(item, result=res))
             extra = {k: x for k, x in session.extra.items() if k != "undo"}
             if item.skill_id in extra.get("learned", []):
                 extra["learned"] = [k for k in extra["learned"] if k != item.skill_id]
@@ -2590,32 +2002,17 @@ class StudyService:
                 try:
                     u.undo_last_answer(reason=reason, note=note, session=after)
                 except NothingToUndoError, UndoConflictError:
-                    # Rows changed since, so no exact undo: void the answer and rebuild the
-                    # memory of the cards it touched from the log (C3); Elo, tiers and Level
-                    # keep their later values.
                     group = [
                         a.id
                         for a in u.attempts(session_id=session.id)
                         if a.presentation_id == last.presentation_id and a.id is not None
                     ]
-                    engine.void_attempts(group, reason=reason, note=note, session=after)
-                if reason == "dispute":
-                    u.add_dispute(
-                        Dispute(attempt_id=_int(last.id), raw_input=last.raw_input, note=note)
-                    )
-                else:
-                    u.add_report(
-                        Report(
-                            card_id=card.id,
-                            card_rev=card.rev,
-                            attempt_id=last.id,
-                            reason=note or "",
-                        )
-                    )
+                    u.void_attempts(group, reason=reason, note=note, session=after)
+                self._log_flag(u, reason, card, last.id, last.raw_input, note)
 
             users.atomic(void_and_log)
             return v.FlagResult(ok=True, message=message, attempt_counts=False)
-        if reason == "report":  # before answering: hide it and serve another problem
+        if reason == "report":  # before answering: hide it and serve another item
             users.add_report(Report(card_id=card.id, card_rev=card.rev, reason=note or ""))
             if not cur.get("closed"):
                 tries = [
@@ -2625,192 +2022,131 @@ class StudyService:
                 ]
                 if tries:
                     users.void_attempts(tries, reason="report", note=note)
-                self._repick(session, plan, item, engine)
+                self._repick(session, plan)
             return v.FlagResult(ok=True, message="Reported and hidden.", attempt_counts=False)
         return v.FlagResult(ok=False, message="There is no answer to dispute.")
 
-    # ================================================================ other ways to study
-
-    def _focused_plan(self, req: v.StartRequest, engine: Engine) -> Plan:
-        """QUE-14: a section, a skill or the current weak spots, outside the plan. Results
-        count as ordinary reviews; a new skill still goes through its learning phase."""
-        snap = gather(self._storage, engine)
-        catalog = snap.catalog
-        if req.skill_id is not None:
-            skills = [req.skill_id] if req.skill_id in catalog.skills else []
-        elif req.section_id is not None:
-            skills = [
-                k for k, s in sorted(catalog.skills.items()) if s.section_id == req.section_id
-            ]
-        elif req.weak_spots:
-            skills = sorted({w.skill_id for w in self._storage.users.weak_spots("open")})
-            skills = skills or sorted(snap.recent_fails)
+    def _log_flag(
+        self,
+        users: Any,
+        reason: VoidReason,
+        card: Card,
+        attempt_id: int | None,
+        raw: str | None,
+        note: str | None,
+    ) -> None:
+        if reason == "dispute":
+            users.add_dispute(Dispute(attempt_id=_int(attempt_id), raw_input=raw, note=note))
         else:
-            raise QueueError("Pick a section, a skill or your weak spots.")
-        if not skills:
-            return Plan(day=snap.day.isoformat(), mode="focused")
-        count = req.count or FOCUSED_DEFAULT
-        builder = TriageBuilder(snap, lighter=False)
-        units: list[Unit] = []
-        slots = 0
-        round_ = 0
-        while slots < count and round_ < count:
-            added = False
-            for skill_id in skills:
-                if slots >= count:
-                    break
-                state = snap.states.get(skill_id)
-                if memory_of(state) is None:
-                    if any(u[0].block == f"blk:{skill_id}" for u in units):
-                        continue
-                    block = learning_block(builder, skill_id, state, order=LEARNING, rank=slots)
-                    unit = tuple(replace(i, purpose="focused") for i in block)
-                else:
-                    unit = (
-                        builder.item(
-                            f"foc:{skill_id}:{round_}",
-                            skill_id,
-                            order=REVIEW,
-                            rank=slots,
-                            tag="review",
-                            variant="review.focused",
-                            purpose="focused",
-                        ),
-                    )
-                units.append(unit)
-                slots += sum(i.slots for i in unit)
-                added = True
-            round_ += 1
-            if not added:
-                break
-        items = order_items(
-            [],
-            [i for u in units for i in u],
-            shares={"": 1.0},
-            confusable=confusable_map(catalog),
-            warmup=False,
-        )
-        items = [replace(i, course_id="") for i in items]
-        return Plan(
-            day=snap.day.isoformat(),
-            mode="focused",
-            policy=policy_for(None).name,
-            n=slots,
-            items=tuple(items),
-            shares={"": 1.0},
-            info={
-                "target": {
-                    "skill": req.skill_id,
-                    "section": req.section_id,
-                    "weak_spots": req.weak_spots,
-                }
-            },
-        )
+            users.add_report(
+                Report(card_id=card.id, card_rev=card.rev, attempt_id=attempt_id, reason=note or "")
+            )
 
-    def _test_plan(self, req: v.StartRequest, engine: Engine, day: date) -> Plan:
-        """ENG-8: a set number (the request's, else the exam's problem count, else 10) of
-        exam-tier problems across the exam's scope: every skill once before any twice, the
-        rest weighted toward weaker recall (weight 1 - recall + TEST_RECALL_FLOOR; with fewer
-        problems than skills, a weighted draw seeded by exam and day picks the skills).
-        Optionally timed at exam pace; graded only at the end (_grade_test). Self-graded
-        problems are left out: nothing is graded until the test ends."""
-        users, packs = self._storage.users, self._storage.packs
-        exam = next((e for e in users.exams() if e.id == req.exam_id), None)
+    # ================================================================ practice tests
+
+    def _test_exam(self, req: v.StartRequest, day: date) -> Exam:
+        """The exam a practice test is for; refused outside its final 21 days."""
+        exam = next((e for e in self._storage.users.exams() if e.id == req.exam_id), None)
         if exam is None:
             raise QueueError("Pick an exam for the practice test.")
-        days = engine.days()
-        if not practice_tests_open(days.day_of(exam.at), day):
+        left = (self._practice.days().day_of(exam.at) - day).days
+        if not 0 <= left <= PRACTICE_TEST_WINDOW_DAYS:
             raise QueueError("Practice tests open in the final 21 days before an exam.")
-        catalog = engine.catalog()
-        scope = [
-            k
-            for k in (
-                catalog.skills_in_sections(exam.sections)
-                if exam.sections
-                else catalog.skills_of_course(exam.course_id or "")
-            )
-            if k in catalog.skills and not catalog.skills[k].method_choice
-        ]
-        states = users.skill_states(scope)
-        skills = [k for k in scope if memory_of(states.get(k)) is not None] or list(scope)
-        count = max(1, req.count or exam.problems or PRACTICE_TEST_DEFAULT)
-        hidden = {k for k, m in users.card_marks().items() if m.hidden or m.suspended}
-        seen = users.card_users()
-        now = self._now()
-        adapter_of = engine.skill_adapters()
-        pools: dict[str, list[str]] = {}
-        for skill_id in skills:
-            tier = catalog.exam_tier(skill_id)
-            refs = [
-                r
-                for r in packs.card_refs(skill_id=skill_id)
-                if r.kind == "problem"
-                and r.status == "active"
-                and r.id not in hidden
-                and all(p.spec.answer_type != "self" for p in specs_for(self._card(r.id)))
-            ]
-            refs.sort(
-                key=lambda r: (
-                    abs(r.tier - tier),
-                    (seen[r.id].last_seen_at or 0) if r.id in seen else -1,
-                    r.id,
-                )
-            )
-            if refs:
-                pools[skill_id] = [r.id for r in refs]
-        weights: dict[str, float] = {}
-        for skill_id in pools:
-            memory = memory_of(states.get(skill_id))
-            recall = adapter_of(skill_id).retrievability(memory, now) if memory is not None else 0.0
-            weights[skill_id] = max(0.0, 1.0 - recall) + TEST_RECALL_FLOOR
-        allocation = practice_test_allocation(
-            weights,
-            {k: len(v) for k, v in pools.items()},
-            count,
-            seed=f"{exam.id}|{day.isoformat()}",
-        )
-        snap = gather(self._storage, engine)
-        builder = TriageBuilder(snap, lighter=False)
-        items: list[PlanItem] = []
-        for skill_id in sorted(allocation, key=lambda k: (-weights[k], k)):
-            for card_id in pools[skill_id][: allocation[skill_id]]:
-                ref_tier = self._card(card_id).tier
-                items.append(
-                    builder.item(
-                        f"pt:{len(items)}",
-                        skill_id,
-                        order=REVIEW,
-                        rank=len(items),
-                        tag="exam-prep",
-                        variant="exam-prep.test",
-                        purpose="practice-test",
-                        tier=float(ref_tier),
-                        card_id=card_id,
+        return exam
+
+    def _test_plan(self, req: v.StartRequest, day: date) -> Plan:
+        """A practice test (ENG-8, wave 2 without triage): N problems at tier 3 (the
+        request's count, else the exam's problem count, else 10) from the exam's scope
+        sections, none served in the last 7 days, spread over the scope's skills (every skill
+        once before any twice); optionally timed at the sum of their standard times; graded at
+        the end. Self-graded problems are left out: nothing is graded until the test ends."""
+        users = self._storage.users
+        exam = self._test_exam(req, day)
+        catalog = self._practice.catalog()
+        unavailable = self._practice.unavailable()
+        fresh_since = self._now() - PRACTICE_TEST_FRESH_DAYS * DAY_MS
+        recent = {a.card_id for a in users.attempts(since=fresh_since)}
+        pools: list[tuple[str, str, list[ProblemSpec]]] = []  # (course, skill, problems)
+        for course_id, entry in catalog.courses.items():
+            if exam.course_id is not None and exam.course_id != course_id:
+                continue
+            for skill in entry.course.skills:
+                if skill.background or not _in_scope(skill.deck, exam.sections):
+                    continue
+                problems = [
+                    p
+                    for p in skill.pool
+                    if p.tier == PRACTICE_TEST_TIER
+                    and p.part is None
+                    and p.card_id not in unavailable
+                    and p.card_id not in recent
+                    and all(s.spec.answer_type != "self" for s in specs_for(self._card(p.card_id)))
+                ]
+                if problems:
+                    pools.append(
+                        (course_id, skill.skill_id, sorted(problems, key=lambda p: p.problem_id))
                     )
+        count = max(1, req.count or exam.problems or PRACTICE_TEST_DEFAULT)
+        chosen: list[tuple[str, ProblemSpec]] = []
+        taken: set[str] = set()
+        while len(chosen) < count:
+            added = False
+            for course_id, _, problems in pools:
+                if len(chosen) >= count:
+                    break
+                found = next((p for p in problems if p.card_id not in taken), None)
+                if found is not None:
+                    chosen.append((course_id, found))
+                    taken.add(found.card_id)
+                    added = True
+            if not added:
+                break
+        version = self._practice.params().version
+        plan = Plan(day=day.isoformat(), mode="practice-test")
+        items: list[PlanItem] = []
+        for course_id, problem in chosen:
+            plan, key = plan.next_key("pt")
+            tag, label, variant = ROLE_REASONS["practice-test"]
+            items.append(
+                PlanItem(
+                    key=key,
+                    kind="problem",
+                    skill_id=problem.main_skill,
+                    course_id=course_id,
+                    section_id=catalog.skill_decks.get(problem.main_skill),
+                    order=REVIEW,
+                    rank=float(len(items)),
+                    tag=tag,
+                    label=label,
+                    why=why(variant),
+                    purpose="practice-test",
+                    tier_hint=float(problem.tier),
+                    est_ms=round(problem.standard_minutes * MINUTE_MS),
+                    card_id=problem.card_id,
+                    meta={
+                        "problem": problem.problem_id,
+                        "tier": problem.tier,
+                        "standard": problem.standard_minutes,
+                        "minutes": problem.standard_minutes,
+                        "priority": 1,
+                        "reason": "practice-test",
+                        "version": version,
+                    },
                 )
-        items = order_items([], items, shares={"": 1.0}, warmup=False)
-        items = [replace(i, course_id="") for i in items]
+            )
         limit = None
         if req.timed:
-            per = (
-                exam.minutes / exam.problems
-                if exam.minutes and exam.problems
-                else DEFAULT_TEST_MINUTES_PER_PROBLEM
-            )
-            limit = math.ceil(per * len(items) * MINUTE_MS)
-        unanswered = users.get_setting(TEST_UNANSWERED_KEY, TEST_UNANSWERED_DEFAULT)
-        return Plan(
-            day=day.isoformat(),
-            mode="practice-test",
+            limit = math.ceil(sum(p.standard_minutes for _, p in chosen) * MINUTE_MS)
+        return replace(
+            plan,
             n=len(items),
             items=tuple(items),
-            shares={"": 1.0},
             info={
+                "engine": ENGINE,
                 "exam_id": exam.id,
                 "timed": req.timed,
                 "limit_ms": limit,
-                "unanswered": "skip" if unanswered == "skip" else "again",
-                "weights": {k: round(w, 4) for k, w in weights.items()},
+                "unanswered": "skip",
             },
         )
 
@@ -2823,7 +2159,6 @@ class StudyService:
         card: Card,
         req: v.SubmitRequest,
         base: dict[str, Any],
-        engine: Engine,
     ) -> v.AttemptResult:
         """A practice-test answer is checked and saved, with no feedback until the end. One
         try per problem; a multi-part problem keeps each part's verdict."""
@@ -2855,6 +2190,7 @@ class StudyService:
                 "verdict": "correct"
                 if checked.correct
                 else ("undecided" if checked.undecided else "incorrect"),
+                "matched_wrong": checked.matched_index,
             }
             if card.parts and not checked.undecided:
                 answer["parts"] = [
@@ -2865,7 +2201,8 @@ class StudyService:
                     ).as_json()
                     for p in checked.verdicts
                 ]
-        res = {"answer": answer, "graded": False}
+        res = {"answer": answer, "graded": False, "presentation_id": cur.get("presentation_id")}
+        res["shown_at"] = cur.get("shown_at")
         plan = plan.updated(replace(item, status="done", result=res))
         session = replace(session, plan=plan.to_json(), current=None)
         limit = plan.info.get("limit_ms")
@@ -2876,104 +2213,69 @@ class StudyService:
                 replace(i, status="skipped", result={"unanswered": True}) if i.pending else i
                 for i in plan.items
             )
-        session = self._advance(session, plan, engine)
+        self._advance(session, plan)
         return v.AttemptResult(
-            item_key=item.key, outcome="recorded", message="Saved. Results come at the end."
+            item_key=item.key,
+            outcome="recorded",
+            message="Saved. Results come at the end.",
+            first_try_counted=True,
         )
 
     def _grade_test(
-        self, session: SessionState, plan: Plan, engine: Engine
+        self, session: SessionState, plan: Plan
     ) -> tuple[SessionState, Plan, v.TestResult]:
-        """Grade a practice test when it ends (each problem its own transaction, with the
-        session row marking it graded); results count as reviews. A problem never answered
-        when the test ends (stopped early or time up) scores zero in the test, but memory
-        can't fail a question the student never saw (C5, ADR-0014): it is logged as an
-        unrated attempt (no FSRS event, no lapse, no leech count). The setting
-        `queue.test_unanswered` = "again" still counts it as Again."""
-        catalog = engine.catalog()
-        policy = str(plan.info.get("unanswered", "skip"))  # plans from before: not graded
+        """Grade a practice test when it ends: each answered problem through the commit path
+        (its own transaction, with the session row marking it graded), role practice-test. A
+        problem never answered scores zero in the test but is no evidence about the student
+        (C5): it is logged as unanswered, which the learner skips."""
+        catalog = self._practice.catalog()
         now = self._now()
+        users = self._storage.users
         for item in list(plan.items):
             res = dict(item.result or {})
-            if res.get("graded") or item.card_id is None:
+            if res.get("graded") or item.card_id is None or item.kind != "problem":
                 continue
-            answer = res.get("answer")
-            if answer is None and item.kind == "problem" and policy != "again":
-                session = self._log_unanswered(session, plan, item, res, engine, now)
-                plan = Plan.from_json(session.plan)
-                continue
-            if answer is None:
-                if policy != "again" or item.kind != "problem":
-                    continue
-                answer = {
-                    "at": now,
-                    "correct": False,
-                    "gave_up": True,
-                    "unanswered": True,
-                    "verdict": "gave-up",
-                    "timing": {},
-                }
-                card = self._card(item.card_id)
-                if card.parts:
-                    answer["parts"] = [
-                        PartOutcome(
-                            label=p.label, skill_id=p.skill_id, correct=False, gave_up=True
-                        ).as_json()
-                        for p in card.parts
-                    ]
-                res["answer"] = answer
-            facts = AnswerFacts(
-                correct=bool(answer.get("correct")),
-                gave_up=bool(answer.get("gave_up")),
-                unsure=bool(answer.get("unsure")),
-                guessed=bool(answer.get("guessed")),
+            given = res.get("answer")
+            unanswered = given is None
+            answer: dict[str, Any] = (
+                {"at": now, "correct": False, "unanswered": True, "verdict": "gave-up"}
+                if given is None
+                else dict(given)
             )
-            res["graded"] = True
-            marked = plan.updated(replace(item, status="done", result=res))
+            card = self._card(item.card_id)
             cur = {
                 "card_id": item.card_id,
-                "presentation_id": _uid(),
-                "shown_at": None,
+                "presentation_id": res.get("presentation_id") or _uid(),
+                "shown_at": res.get("shown_at"),
                 "key": item.key,
             }
+            res.update(answer=answer, graded=True)
+            marked = plan.updated(replace(item, status="done", result=res))
             graded = replace(session, plan=marked.to_json(), current=None)
-            outcome = self._outcome(
-                graded,
-                plan,
-                item,
-                cur,
-                facts=facts,
-                timing=TimingFacts(**answer.get("timing", {})),
-                at=int(answer["at"]),
-                raw=answer.get("raw_input"),
-                verdict=answer.get("verdict"),
-                parts=answer.get("parts", ()),
-            )
-            if answer.get("unanswered"):
-                outcome = replace(outcome, extra={**outcome.extra, "unanswered": True})
-            recorded = engine.grade(outcome)
+            row = self._attempt_row(graded, plan, item, cur, answer, card, final=True)
+            stored = users.record_answer(GradedAnswer(attempt=row, session=graded))
+            if stored.id is not None:
+                self._practice.record(stored.id)
             res.update(
-                attempt_id=recorded.attempt.id,
-                rating=recorded.attempt.rating,
-                correct=bool(answer.get("correct")),
+                attempt_id=stored.id,
+                correct=None if unanswered else bool(answer.get("correct")),
             )
             plan = marked.updated(replace(item, status="done", result=res))
-            session = self._storage.users.save_session(replace(graded, plan=plan.to_json()))
+            session = users.save_session(replace(graded, plan=plan.to_json()))
         lines = []
         for item in plan.items:
             res = item.result or {}
-            answer = res.get("answer")
-            answered = answer is not None and not answer.get("unanswered")
-            skill = catalog.skills.get(item.skill_id or "")
+            shown = res.get("answer")
+            answered = shown is not None and not shown.get("unanswered")
             lines.append(
                 v.TestLine(
                     item_key=item.key,
                     card_id=item.card_id,
-                    skill_name=skill.name if skill is not None else "",
+                    skill_name=catalog.name(item.skill_id or ""),
                     answered=answered,
-                    correct=bool(answered and answer and answer.get("correct")),
-                    your_answer=answer.get("raw_input") if answered and answer else None,
-                    rating=res.get("rating"),
+                    correct=bool(answered and shown and shown.get("correct")),
+                    your_answer=shown.get("raw_input") if answered and shown else None,
+                    rating=None,
                 )
             )
         result = v.TestResult(
@@ -2984,64 +2286,30 @@ class StudyService:
             timed=bool(plan.info.get("timed")),
             time_up=bool(plan.info.get("time_up")),
             lines=tuple(lines),
-            unanswered="again" if policy == "again" else "skip",
+            unanswered="skip",
             limit_ms=plan.info.get("limit_ms"),
         )
         return session, plan, result
 
-    def _log_unanswered(
-        self,
-        session: SessionState,
-        plan: Plan,
-        item: PlanItem,
-        res: dict[str, Any],
-        engine: Engine,
-        now: int,
-    ) -> SessionState:
-        """C5: an unanswered practice-test problem as an unrated attempt (the test's zero),
-        committed with the session row that marks it graded."""
-        answer = {"at": now, "correct": False, "unanswered": True, "verdict": "gave-up"}
-        res = {**res, "answer": answer, "graded": True}
-        marked = plan.updated(replace(item, status="done", result=res))
-        cur = {"card_id": item.card_id, "presentation_id": _uid(), "shown_at": None}
-        graded = replace(session, plan=marked.to_json(), current=None)
-        facts = AnswerFacts(correct=False, gave_up=True)
-        outcome = self._outcome(
-            graded, plan, item, cur, facts=facts, timing=TimingFacts(), at=now, verdict="gave-up"
-        )
-        outcome = replace(outcome, extra={**outcome.extra, "unanswered": True})
-        skill_id = outcome.card.skill_id or item.skill_id or ""
-        ctx = engine.context(skill_id, card_id=outcome.card.id, at_ms=now)
-        stored = self._storage.users.record_answer(record_unrated(ctx, outcome))
-        res.update(attempt_id=stored.id, rating=None, correct=False)
-        done = marked.updated(replace(item, status="done", result=res))
-        return self._storage.users.save_session(replace(graded, plan=done.to_json()))
-
     # ================================================================ summary
 
-    def _summary(
-        self, session: SessionState, plan: Plan, engine: Engine, test: v.TestResult | None
-    ) -> v.Summary:
-        catalog = engine.catalog()
+    def _summary(self, session: SessionState, plan: Plan, test: v.TestResult | None) -> v.Summary:
+        catalog = self._practice.catalog()
         done = [i for i in plan.items if i.status == "done" and i.kind == "problem"]
         counted = [i for i in done if (i.result or {}).get("correct") is not None]
         misses = [i for i in counted if not (i.result or {}).get("correct")]
-
-        def name(k: str | None) -> str:
-            s = catalog.skills.get(k or "")
-            return s.name if s is not None else (k or "")
-
-        learned = tuple(dict.fromkeys(name(k) for k in session.extra.get("learned", [])))
-        ready_today = self._learning_ready_today(engine) if plan.mode in DAILY_MODES else 0
-        tomorrow = self._today(engine) + timedelta(days=1)
-        snap = gather(self._storage, engine, day=tomorrow)
-        forecast_plan = build_plan(snap)
+        learned = tuple(dict.fromkeys(catalog.name(k) for k in session.extra.get("learned", [])))
+        today = self._today()
+        tomorrow = today + timedelta(days=1)
+        planned = self._tomorrow(today)
+        forecast_items = self._problem_items(planned, Plan(day=tomorrow.isoformat()))[1]
         forecast = v.Forecast(
             day=tomorrow.isoformat(),
-            problems=sum(i.slots for i in forecast_plan.pending),
-            minutes=projected_minutes(forecast_plan.pending),
-            courses=self._course_lines(snap, forecast_plan.pending),
+            problems=len(forecast_items),
+            minutes=_minutes(forecast_items),
+            courses=self._course_lines(forecast_items),
         )
+        rest = self._practice.plan_day(today, self._now(), self._practice.served(today))
         return v.Summary(
             mode=plan.mode,
             problems=len(counted),
@@ -3053,7 +2321,7 @@ class StudyService:
                     item_key=i.key,
                     card_id=(i.result or {}).get("card_id"),
                     skill_id=i.skill_id,
-                    skill_name=name(i.skill_id),
+                    skill_name=catalog.name(i.skill_id or ""),
                     tag=i.tag,
                     label=i.label,
                 )
@@ -3062,154 +2330,237 @@ class StudyService:
             learned=learned,
             flashcards=sum(1 for i in plan.items if i.kind == "flashcard" and i.status == "done"),
             forecast=forecast,
-            extra_practice_available=bool(forecast_plan.pending),
-            practice_tests=tuple(e for e in self._exam_lines(snap) if e.practice_test),
+            extra_practice_available=bool(self._extra_items(today, 1, planned)),
+            practice_tests=tuple(e for e in self._exam_lines(today) if e.practice_test),
             test=test,
-            ready_today=ready_today,
+            # Problems today's plan still holds (the session ended before the plan did).
+            ready_today=sum(1 for p in rest.items if p.item.problem is not None),
         )
-
-    def _learning_ready_today(self, engine: Engine) -> int:
-        """Learning-phase problems Home would offer now that can still be served today: each
-        learning block's slots, capped by its skill's problems not yet seen today."""
-        today_plan = build_plan(gather(self._storage, engine))
-        blocks: dict[str, int] = {}
-        for item in today_plan.pending:
-            if item.block is not None and item.skill_id is not None and item.slots:
-                blocks[item.skill_id] = blocks.get(item.skill_id, 0) + item.slots
-        return sum(min(n, engine.unseen_today(k)) for k, n in blocks.items())
 
 
 # ---------------------------------------------------------------- helpers
 
 
-class _CallEngine(Engine):
-    """The engine for one service call: the skill catalog is read once per call instead of
-    on every engine method (packs and user content don't change inside a call)."""
-
-    def __init__(
-        self,
-        storage: Storage,
-        *,
-        hooks: Sequence[GradeHook],
-        adapter: FsrsAdapter | None = None,
-    ) -> None:
-        super().__init__(storage, hooks=hooks, adapter=adapter)
-        self._catalog: Catalog | None = None
-        self._confusable: dict[str, frozenset[str]] | None = None
-
-    def catalog(self) -> Catalog:
-        if self._catalog is None:
-            self._catalog = super().catalog()
-        return self._catalog
-
-    def confusable(self) -> dict[str, frozenset[str]]:
-        if self._confusable is None:
-            self._confusable = confusable_map(self.catalog())
-        return self._confusable
+def valid_minutes(
+    timing: TimingFacts,
+    *,
+    untimed: bool,
+    example_opened: bool,
+    tier: int,
+    target_ms: int | None = None,
+) -> float | None:
+    """A correct first try's valid solving time (TIME-4/5): solve time plus the typing
+    allowance, capped at four times the target (the problem's standard time T*; the tier
+    floor without one), 3 to 30 minutes; None when the timing is not valid (untimed, a pause
+    over 2 minutes, the first answer after a wake, an example opened, no solve time)."""
+    if excluded_from_baseline(timing, untimed=untimed, hints_used=0, example_opened=example_opened):
+        return None
+    speed = speed_time_ms(timing.solve_ms, timing.expected_chars, target_ms=target_ms, tier=tier)
+    return None if not speed else speed / MINUTE_MS
 
 
-class _Light:
-    """Builds inserted items with the same fields triage gives (course, section, minutes)."""
-
-    def __init__(self, snap: Snapshot, lighter: bool) -> None:
-        self.snap = snap
-        self._builder = TriageBuilder(snap, lighter=lighter)
-
-    def make(self, key: str, skill_id: str | None, **kw: Any) -> PlanItem:
-        kw.setdefault("rank", -1.0)
-        return replace(self._builder.item(key, skill_id, **kw), inserted=True)
+def sitting_ms(shown_at: int | None, submitted_at: int) -> int | None:
+    """A sitting problem's clock: wall-clock time from the problem shown to the submit."""
+    return None if shown_at is None else max(0, submitted_at - shown_at)
 
 
-def gather_light(service: StudyService, engine: Engine, day: date, plan: Plan) -> _Light:
-    """A small snapshot for building re-plan items: no due lists, no boosters; minutes
-    from the plan's own estimates per skill."""
-    storage = service.storage
-    users = storage.users
-    catalog = engine.catalog()
-    times = TimeTable(
-        by_skill={i.skill_id: i.est_ms for i in plan.items if i.kind == "problem" and i.skill_id}
+def sitting_minutes(
+    timing: TimingFacts,
+    *,
+    shown_at: int | None,
+    submitted_at: int,
+    untimed: bool,
+    interrupted: bool,
+    tier: int,
+    target_ms: int | None = None,
+) -> float | None:
+    """A certification sitting's valid solving time (coordinator rule, wave2-impl-notes.md):
+    the clock never stops, as in an exam, so a defocus or a pause counts. It is the wall-clock
+    time from the problem shown to the submit plus the typing allowance (TIME-4's
+    `speed_time_ms`), with the usual cap (TIME-5). The time is unknown (None, which makes the
+    sitting void) after a pause over 2 minutes, for the first answer after the Mac wakes, in an
+    untimed session (TIME-6), or when the app was closed and opened again on the problem
+    (`interrupted`)."""
+    wall = sitting_ms(shown_at, submitted_at)
+    if wall is None or untimed or interrupted or timing.after_wake:
+        return None
+    if (timing.longest_pause_ms or 0) > BASELINE_LONG_PAUSE_MS:
+        return None
+    speed = speed_time_ms(wall, timing.expected_chars, target_ms=target_ms, tier=tier)
+    return None if speed is None else speed / MINUTE_MS
+
+
+def _plan_item(key: str, planned: PlannedItem, catalog: Catalog, version: str) -> PlanItem:
+    """A planner item as a session plan item (wave2-integration.md section 4)."""
+    it = planned.item
+    problem = it.problem
+    role = it.role
+    reason = it.reason or ""
+    tag, label, variant = LADDER_REASONS.get(reason) or ROLE_REASONS.get(
+        role, ("review", TAG_LABELS["review"], "review")
     )
-    snap = Snapshot(
-        day=day,
-        now_ms=storage.db.clock.now_ms(),
-        days=engine.days(),
-        settings=QueueSettings.from_values(users.settings(), day),
-        catalog=catalog,
-        adapter=engine.adapter(),
-        courses={},
-        section_states={k: s.state for k, s in users.section_states().items()},
-        goals=engine.goals(),
-        states=users.skill_states(),
-        times=times,
+    if problem is None:  # the new skill's worked example
+        tag, label, variant = "new-skill", "Worked example", "new-skill"
+    order = CHECK if role == "check" else LEARNING if role == "new" else REVIEW
+    return PlanItem(
+        key=key,
+        kind="problem" if problem is not None else "example",
+        skill_id=it.skill_id,
+        course_id=planned.course_id,
+        section_id=catalog.skill_decks.get(it.skill_id),
+        order=order,
+        rank=float(it.priority),
+        tag=tag,
+        label=label,
+        why=why(variant),
+        purpose=role,
+        tier_hint=float(it.tier or (problem.tier if problem else 1)),
+        est_ms=round(it.expected_minutes * MINUTE_MS),
+        block=f"blk:{it.skill_id}" if it.block else None,
+        card_id=problem.card_id if problem is not None else it.example_card,
+        meta={
+            "problem": None if problem is None else problem.problem_id,
+            "standard": None if problem is None else problem.standard_minutes,
+            "milestone": it.milestone,
+            "missed": it.missed,
+            "p": it.p,
+            "ladder": int(getattr(it, "ladder", 0) or 0),
+            "sitting": getattr(it, "sitting", None),
+            "time_limit": getattr(it, "time_limit", None),
+            "priority": it.priority,
+            "reason": reason,
+            "tier": it.tier,
+            "block": it.block,
+            "minutes": it.expected_minutes,
+            "version": version,
+        },
     )
-    return _Light(snap, lighter=plan.lighter)
 
 
-def _short_anchors(plan: Plan) -> list[str]:
-    """Pending anchored items placed closer to their miss than their gap allows."""
-    seq = [i for i in plan.items if i.kind != "flashcard" and i.status != "skipped"]
-    pos = {i.key: n for n, i in enumerate(seq)}
-    return [
-        i.key
-        for i in seq
-        if i.pending
-        and i.anchor is not None
-        and i.anchor in pos
-        and pos[i.key] - pos[i.anchor] < i.gap
-    ]
+def _flashcard_item(card_id: str, card_ord: int, skill: str | None, catalog: Catalog) -> PlanItem:
+    return PlanItem(
+        key=f"fc:{card_id}:{card_ord}",
+        kind="flashcard",
+        skill_id=skill,
+        course_id=catalog.course_of(skill or "") or "",
+        section_id=catalog.skill_decks.get(skill or ""),
+        order=FLASHCARD,
+        tag="review",
+        label="Flashcard",
+        why=why("flashcard"),
+        purpose="review",
+        tier_hint=1.0,
+        est_ms=FLASHCARD_MS,
+        card_id=card_id,
+        card_ord=card_ord,
+    )
 
 
-def _choice(choice: str, step: int | None) -> tuple[str | None, int | None, bool, bool]:
-    """(error_choice, error_step, didnt_know_start, slip) for a picker choice. Accepts the
-    spec's names and the page prototype's (different_method, cant_tell, step 0)."""
-    c = choice.replace("_", "-")
-    if c == "step":
-        if step is None:
-            raise QueueError("Pick the step where your work went differently.")
-        if step == 0:
-            return "setup", 0, True, False
-        return "step", step, False, False
-    if c in ("setup", "start", "didnt-know-start"):
-        return "setup", 0, True, False
-    if c in ("slip", "misread"):
-        return c, None, False, True
-    if c in ("other-method", "different-method"):
-        return "other-method", None, False, False
-    if c in ("cant-tell", "skip"):
-        return "cant-tell", None, False, False
-    raise QueueError(f"unknown choice {choice!r}")
+def _insert_reshow(
+    done: Sequence[PlanItem], tail: Sequence[PlanItem], item: PlanItem
+) -> list[PlanItem]:
+    """I5: a missed flashcard at least `gap` items after its miss."""
+    keys = [i.key for i in done if i.status != "skipped"]
+    after = len(keys) - 1 - keys.index(item.anchor) if item.anchor in keys else 0
+    out = list(tail)
+    out.insert(min(max(0, item.gap - after), len(out)), item)
+    return out
 
 
-def practice_test_allocation(
-    weights: Mapping[str, float], capacity: Mapping[str, int], count: int, *, seed: str
-) -> dict[str, int]:
-    """Problems per skill for a practice test (ENG-8): spread over the scope, weighted
-    toward weaker recall. With at least as many problems as skills, every skill gets one and
-    each further problem goes to the skill with the largest weight / (problems + 1) (a
-    D'Hondt split); with fewer, a weighted draw without replacement (keys u^(1/w), u from a
-    hash of seed and skill, so a test is stable) picks which skills appear. `capacity`:
-    problems available per skill."""
-    skills = sorted(k for k in weights if capacity.get(k, 0) > 0)
-    if not skills or count <= 0:
-        return {}
-    if count < len(skills):
+def _aside(plan: Plan) -> list[str]:
+    """The skill ids today's plan has set aside."""
+    return [str(k) for k in (plan.info.get("summary") or {}).get("set_aside_ids", ())]
 
-        def key(k: str) -> float:
-            digest = hashlib.sha256(f"{seed}|{k}".encode()).digest()
-            u = (int.from_bytes(digest[:8], "big") + 1) / (2**64 + 1)
-            return float(u ** (1.0 / max(weights[k], 1e-9)))
 
-        keyed = sorted(skills, key=lambda k: (-key(k), k))
-        return {k: 1 for k in keyed[:count]}
-    out = {k: 1 for k in skills}
-    left = count - len(skills)
-    while left > 0:
-        open_ = [k for k in skills if out[k] < capacity[k]]
-        if not open_:
-            break
-        best = max(open_, key=lambda k: (weights[k] / (out[k] + 1), -skills.index(k)))
-        out[best] += 1
-        left -= 1
+def _parts_facts(outcomes: Sequence[PartOutcome]) -> tuple[bool, int, bool]:
+    """A multi-part problem's final answer: (right when every part is, the most tries any
+    part took, given up when a part was and not every part is right)."""
+    correct = bool(outcomes) and all(o.correct for o in outcomes)
+    number = max((o.attempts for o in outcomes), default=1)
+    return correct, number, any(o.gave_up for o in outcomes) and not correct
+
+
+def _missed_first(answer: Mapping[str, Any] | None) -> bool:
+    """Whether an answer's first try was not a clean success: wrong, given up, right only on
+    a later try, or a part so. Its solution has been on screen, so undo brings the problem
+    back aided (ADR-0019 item 7); otherwise undo would erase a miss."""
+    if not isinstance(answer, Mapping):
+        return False
+    if not answer.get("correct") or answer.get("gave_up"):
+        return True
+    if int(answer.get("attempt_number", 1)) > 1:
+        return True
+    return any(
+        not p.get("correct") or p.get("gave_up") or int(p.get("attempts", 1)) > 1
+        for p in answer.get("parts") or ()
+    )
+
+
+def _row_missed(attempt: Attempt) -> bool:
+    """A problem row of an answer whose first try was not a clean success (see
+    `_missed_first`): a "Not quite" try, a final answer not right on its first try (self-graded
+    ones included: their solution came first), aided, or a part so."""
+    if attempt.card_kind != "problem":
+        return False
+    if not attempt.final or attempt.verdict != "correct" or attempt.attempt_number > 1:
+        return True
+    if attempt.example_opened or attempt.extra.get("solution_seen"):
+        return True
+    return _missed_first({"correct": True, "parts": attempt.extra.get("parts") or ()})
+
+
+def _first_try_success(cur: Mapping[str, Any], pending: Mapping[str, Any], item: PlanItem) -> bool:
+    """Whether the item's problem was right on its first try, unaided (what counts)."""
+    if cur.get(UNDO_AFTER_SOLUTION) or cur.get("example_opened"):
+        return False
+    parts = pending.get("parts")
+    problem = (item.meta or {}).get("problem")
+    if parts:
+        label = str(problem).split("#", 1)[1] if problem and "#" in str(problem) else None
+        chosen = [p for p in parts if label is None or p.get("label") == label]
+        return bool(chosen) and all(
+            p.get("correct") and int(p.get("attempts", 1)) == 1 and not p.get("gave_up")
+            for p in chosen
+        )
+    return (
+        int(pending.get("attempt_number", 1)) == 1
+        and bool(pending.get("correct"))
+        and not pending.get("gave_up")
+    )
+
+
+def _presentation_ms(
+    attempts: Sequence[Attempt], cur: Mapping[str, Any], pending: Mapping[str, Any]
+) -> int:
+    """Active time on the presentation: its tries so far and the final answer."""
+    presentation = cur.get("presentation_id")
+    tries = sum(a.active_ms or 0 for a in attempts if a.presentation_id == presentation)
+    final = int((pending.get("timing") or {}).get("active_ms") or 0)
+    return max(tries, final)
+
+
+def _in_scope(deck: str, sections: Sequence[str]) -> bool:
+    return not sections or any(deck == s or deck.startswith(s + "::") for s in sections)
+
+
+def _verdict_json(p: Any) -> dict[str, Any]:
+    return {
+        "part": p.part,
+        "status": p.status,
+        "read_as": p.read_as,
+        "message": p.message,
+        "feedback": p.feedback,
+        "wrong_step": p.wrong_step,
+    }
+
+
+def _quiet(verdict: Mapping[str, Any]) -> dict[str, Any]:
+    """A wrong try's verdict as the student sees it while the problem is open: the verdict
+    and the answer as read, no checker message, no known-wrong-answer feedback, no step
+    (coordinator rule, design v1.3 4.6: they come with the solution)."""
+    out = dict(verdict)
+    if out.get("status") != Status.CORRECT:
+        out.update(message="", feedback=None, wrong_step=None)
     return out
 
 
@@ -3238,17 +2589,11 @@ def _self_graded(card: Card, req: v.SubmitRequest) -> dict[str, Any]:
 
 
 def _outcome_of(pending: Mapping[str, Any]) -> Literal["correct", "incorrect"]:
-    """A multi-part problem is "correct" only when every part is (its own skill may still
-    count as a success when only parts with skills of their own were missed)."""
+    """A multi-part problem is "correct" only when every part is."""
     parts = pending.get("parts")
     if parts:
         return "correct" if all(p.get("correct") for p in parts) else "incorrect"
     return "correct" if pending.get("correct") else "incorrect"
-
-
-def _find_error_view(pending: Mapping[str, Any]) -> v.FindErrorView | None:
-    data = pending.get("find_error")
-    return None if not data else v.FindErrorView(**data)
 
 
 def _work(card: Card) -> tuple[v.StepView, ...]:
@@ -3278,6 +2623,10 @@ def _worked_md(card: Card) -> str:
     elif card.answer_md or card.answer:
         blocks.append(f"**Answer:** {card.answer_md or card.answer}")
     return "\n\n".join(blocks)
+
+
+def _minutes(items: Sequence[PlanItem]) -> int:
+    return math.ceil(sum(i.est_ms for i in items if i.pending) / MINUTE_MS)
 
 
 def _clock(ms: int | None) -> str:
@@ -3315,15 +2664,4 @@ def _int(value: int | None) -> int:
     return value
 
 
-__all__ = ["QueueError", "StudyService"]
-
-
-# A problem brought back by undo after its solution was on screen (ADR-0019 item 7).
-UNDO_AFTER_SOLUTION = "undo_after_solution"
-
-
-def _hints_used(cur: Mapping[str, Any]) -> int:
-    """Hints used on the problem on screen. Undone after its solution was shown, it counts
-    at least one, so a re-answer is at most Hard and never strict (ADR-0019 item 7)."""
-    hints = int(cur.get("hints", 0))
-    return max(hints, 1) if cur.get(UNDO_AFTER_SOLUTION) else hints
+__all__ = ["QueueError", "StudyService", "valid_minutes"]
